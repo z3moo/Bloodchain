@@ -160,9 +160,7 @@ async function registerDonor(db, body) {
   const existing = await first(db, 'SELECT MaTaiKhoan FROM TAI_KHOAN WHERE lower(TenDangNhap) = lower(?)', [username])
   if (existing) return json({ message: 'Tên đăng nhập đã tồn tại.' }, 409)
   const accountId = await nextId(db, 'TAI_KHOAN', 'TK')
-  const donorId = await nextId(db, 'NGUOI_HIEN', 'NH')
-  await run(db, 'INSERT INTO NGUOI_HIEN VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)', [donorId, displayName, '2000-01-01', T.other, `${Date.now()}`.slice(-12), '', '', 0, T.bronze, 'O+'])
-  await run(db, 'INSERT INTO TAI_KHOAN VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)', [accountId, username, password, displayName, email || '', 'DONOR', null, donorId, null, T.active])
+  await run(db, 'INSERT INTO TAI_KHOAN VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)', [accountId, username, password, displayName, email || '', 'DONOR', null, null, null, T.active])
   const user = await first(db, 'SELECT * FROM TAI_KHOAN WHERE TenDangNhap = ?', [username])
   return json(mapAccount(user), 201)
 }

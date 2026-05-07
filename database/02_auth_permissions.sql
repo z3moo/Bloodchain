@@ -77,12 +77,11 @@ CREATE PROCEDURE sp_DangKyNguoiHien
   @TenDangNhap VARCHAR(50),
   @MatKhau VARCHAR(50),
   @HoTen NVARCHAR(120),
-  @Email VARCHAR(120),
-  @MaNguoiHien VARCHAR(20)
+  @Email VARCHAR(120)
 AS
 BEGIN
   INSERT INTO TAI_KHOAN
-  VALUES (@MaTaiKhoan, @TenDangNhap, @MatKhau, @HoTen, @Email, 'DONOR', NULL, @MaNguoiHien, NULL, NCHAR(72) + NCHAR(111) + NCHAR(7841) + NCHAR(116) + NCHAR(32) + NCHAR(273) + NCHAR(7897) + NCHAR(110) + NCHAR(103));
+  VALUES (@MaTaiKhoan, @TenDangNhap, @MatKhau, @HoTen, @Email, 'DONOR', NULL, NULL, NULL, NCHAR(72) + NCHAR(111) + NCHAR(7841) + NCHAR(116) + NCHAR(32) + NCHAR(273) + NCHAR(7897) + NCHAR(110) + NCHAR(103));
 END;
 GO
 
@@ -126,7 +125,7 @@ GO
 
 -- Vi du:
 -- EXEC sp_DangNhap 'admin', 'Admin@123';
--- EXEC sp_DangKyNguoiHien 'TK005', 'nguoihien02', '123456', NCHAR(78) + NCHAR(103) + NCHAR(63) + NCHAR(63) + NCHAR(105) + NCHAR(32) + NCHAR(104) + NCHAR(105) + NCHAR(63) + NCHAR(110) + NCHAR(32) + NCHAR(48) + NCHAR(50), 'nh02@mail.com', 'NH002';
+-- EXEC sp_DangKyNguoiHien 'TK005', 'nguoihien02', '123456', NCHAR(78) + NCHAR(103) + NCHAR(63) + NCHAR(63) + NCHAR(105) + NCHAR(32) + NCHAR(104) + NCHAR(105) + NCHAR(63) + NCHAR(110) + NCHAR(32) + NCHAR(48) + NCHAR(50), 'nh02@mail.com';
 -- EXEC sp_ChuyenThanhStaff 'benhvien01';
 -- EXEC sp_ThuHoiStaff 'benhvien01', 'HOSPITAL';
 -- EXEC sp_XoaTaiKhoan 'nguoihien01';
