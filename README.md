@@ -1,51 +1,71 @@
 # BloodChain
 
-BloodChain is a Vue + Express + SQL Server blood donation management demo.
+BloodChain is a Vue + Cloudflare Worker + Cloudflare D1 blood donation management demo.
 
-## Local development
+## Cloudflare deployment
 
-Backend:
+The deployed Worker now serves both parts of the app:
 
-```bash
-cd backend
-npm install
-copy .env.example .env
-npm run dev
-```
+- `frontend/` builds to static assets served by Cloudflare Workers Static Assets.
+- `worker/src/index.js` implements the `/api/*` routes directly in the Worker.
+- `migrations/0001_initial.sql` creates and seeds the Cloudflare D1 database.
 
-Frontend:
+### 1. Create the D1 database
 
 ```bash
-cd frontend
-npm install
-npm run dev
+npx wrangler login
+npm run db:create
 ```
 
-## Cloudflare Worker deployment
+Copy the `database_id` printed by Wrangler into `wrangler.jsonc`, replacing:
 
-This repository includes a Cloudflare Worker wrapper that serves the built Vue app from Worker static assets and proxies `/api/*` to the existing Express backend.
+```json
+"database_id": "00000000-0000-0000-0000-000000000000"
+```
 
-> Important: the current Express backend uses `mssql`/`msnodesqlv8` and a SQL Server database. That backend cannot run directly inside a Cloudflare Worker. Host the backend somewhere that can reach SQL Server, then set the Worker variable `BACKEND_ORIGIN` to that backend origin.
+### 2. Apply migrations
 
-Build and deploy with Wrangler:
+```bash
+npm run db:migrate:remote
+```
+
+For local Worker testing, use:
+
+```bash
+npm run db:migrate:local
+npm run dev:worker
+```
+
+### 3. Deploy
 
 ```bash
 npm run build
-npx wrangler secret put BACKEND_ORIGIN
 npx wrangler deploy
 ```
 
-For Cloudflare's GitHub integration, use:
+For Cloudflare's GitHub integration, keep:
 
 - Build command: `npm run build`
 - Deploy command: `npx wrangler deploy`
 - Worker config: `wrangler.jsonc`
 
-The frontend defaults to same-origin `/api`, so no extra frontend environment variable is required when served by the Worker.
+The frontend defaults to same-origin `/api`, so no frontend API URL is needed.
+
+## Login accounts after seeding
+
+- Admin: `admin` / `Admin@123`
+- Staff: `nhanvien01` / `Nhanvien@123`
+- Hospital: `benhvien01` / `Benhvien@123`
+- Donor: `nguoihien01` / `Nguoihien@123`
+
+## Legacy local Express backend
+
+`backend/` is kept for local SQL Server demos, but Cloudflare deployment no longer needs a separate backend host. D1 is the production database for the Worker deployment.
 
 ## Project layout
 
 - `frontend/` - Vue/Vite app
-- `backend/` - Express API connected to SQL Server
-- `database/` - SQL Server schema and auth scripts
-- `worker/` - Cloudflare Worker entry point for static assets + API proxy
+- `worker/` - Cloudflare Worker API + static asset entry point
+- `migrations/` - Cloudflare D1 schema and seed data
+- `backend/` - legacy Express + SQL Server backend for local demos
+- `database/` - original SQL Server schema scripts
