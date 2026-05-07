@@ -27,53 +27,47 @@ DELETE FROM THANH_PHAN_MAU;
 DELETE FROM KET_QUA_XET_NGHIEM;
 DELETE FROM GOI_MAU_TOAN_PHAN;
 DELETE FROM QUY_DOI_DIEM;
-DELETE FROM TAI_KHOAN;
-DELETE FROM VAI_TRO;
 DELETE FROM BENH_NHAN;
-DELETE FROM NGUOI_HIEN;
 DELETE FROM VI_TRI_KHO;
-DELETE FROM NHAN_VIEN;
-DELETE FROM BENH_VIEN;
 DELETE FROM CHIEN_DICH;
-DELETE FROM NHOM_MAU;
 `
 
 const SEED_SQL = `
-INSERT INTO NHOM_MAU VALUES
+INSERT OR IGNORE INTO NHOM_MAU VALUES
   ('O+', 'O+'), ('O-', 'O-'), ('A+', 'A+'), ('A-', 'A-'),
   ('B+', 'B+'), ('B-', 'B-'), ('AB+', 'AB+'), ('AB-', 'AB-');
-INSERT INTO CHIEN_DICH VALUES
+INSERT OR IGNORE INTO CHIEN_DICH VALUES
   ('CD001', 'Chủ nhật Đỏ 2026', 'Hà Nội', '2026-02-15T08:00:00.000Z', 300, 248),
   ('CD002', 'Giọt hồng mùa hè', 'Học viện Tài chính', '2026-05-10T07:30:00.000Z', 200, 126);
-INSERT INTO BENH_VIEN VALUES
+INSERT OR IGNORE INTO BENH_VIEN VALUES
   ('BV001', 'Bệnh viện Bạch Mai', '78 Giải Phóng, Hà Nội', '02438693731'),
   ('BV002', 'Bệnh viện Việt Đức', '40 Tràng Thi, Hà Nội', '02438253531');
-INSERT INTO NHAN_VIEN VALUES
+INSERT OR IGNORE INTO NHAN_VIEN VALUES
   ('NV001', 'Nguyễn Danh Quân', 'Quản trị hệ thống', 'admin@bloodchain.local'),
   ('NV002', 'Hoàng Ngọc Thịnh', 'Nhân viên xét nghiệm', 'thinh@bloodchain.local'),
   ('NV003', 'Ngô Thị Phương Uyên', 'Điều phối kho máu', 'uyen@bloodchain.local'),
   ('NV004', 'Nguyễn Thị Hải Yến', 'Nhân viên tiếp nhận', 'yen@bloodchain.local');
-INSERT INTO NGUOI_HIEN VALUES
+INSERT OR IGNORE INTO NGUOI_HIEN VALUES
   ('NH001', 'Nguyễn Minh Anh', '1998-03-12', 'Nữ', '001098000111', '0912345678', 'Không', 120, 'Bạc', 'A+'),
   ('NH002', 'Trần Quang Huy', '1995-08-21', 'Nam', '001095000222', '0988123456', 'Không', 240, 'Vàng', 'O+');
-INSERT INTO QUY_DOI_DIEM VALUES ('DQ001', 'Áo thun tri ân', '2026-03-01T09:15:00.000Z', 50, 'NH001');
-INSERT INTO VI_TRI_KHO VALUES ('VT001', 'Tủ lạnh A', 1), ('VT002', 'Tủ lạnh A', 2);
-INSERT INTO GOI_MAU_TOAN_PHAN VALUES
+INSERT OR IGNORE INTO QUY_DOI_DIEM VALUES ('DQ001', 'Áo thun tri ân', '2026-03-01T09:15:00.000Z', 50, 'NH001');
+INSERT OR IGNORE INTO VI_TRI_KHO VALUES ('VT001', 'Tủ lạnh A', 1), ('VT002', 'Tủ lạnh A', 2);
+INSERT OR IGNORE INTO GOI_MAU_TOAN_PHAN VALUES
   ('GM001', '2026-02-15T09:10:00.000Z', 350, 'Đạt', 'NH001', 'A+', 'CD001', 'NV004'),
   ('GM002', '2026-02-15T09:45:00.000Z', 450, 'Đạt', 'NH002', 'O+', 'CD001', 'NV004');
-INSERT INTO KET_QUA_XET_NGHIEM VALUES
+INSERT OR IGNORE INTO KET_QUA_XET_NGHIEM VALUES
   ('XN001', 'HIV', 'Âm tính', '2026-02-15T13:30:00.000Z', 'GM001', 'NV002'),
   ('XN002', 'Viêm gan B', 'Âm tính', '2026-02-15T13:45:00.000Z', 'GM001', 'NV002');
-INSERT INTO THANH_PHAN_MAU VALUES
+INSERT OR IGNORE INTO THANH_PHAN_MAU VALUES
   ('TP001', 'Hồng cầu', 250, '2026-03-22', 'Sẵn sàng', 'GM001', 'VT001'),
   ('TP002', 'Huyết tương', 100, '2026-08-15', 'Sẵn sàng', 'GM001', 'VT002');
-INSERT INTO BENH_NHAN VALUES ('BN001', 'Nguyễn Văn A', '1987-01-17', 'Xuất huyết giảm tiểu cầu', 'A+', 'BV001');
-INSERT INTO PHIEU_YEU_CAU VALUES ('YC001', '2026-02-20T08:00:00.000Z', 'Tiểu cầu', 50, 'Đã duyệt', 'BV001', 'BN001', 'A+', 'NV003');
-INSERT INTO PHIEU_XUAT VALUES ('PX001', '2026-02-20T10:00:00.000Z', 50, 'YC001', 'NV003');
-INSERT INTO CHI_TIET_XUAT VALUES ('PX001', 'TP001', 'Hòa hợp');
-INSERT INTO VAI_TRO VALUES
+INSERT OR IGNORE INTO BENH_NHAN VALUES ('BN001', 'Nguyễn Văn A', '1987-01-17', 'Xuất huyết giảm tiểu cầu', 'A+', 'BV001');
+INSERT OR IGNORE INTO PHIEU_YEU_CAU VALUES ('YC001', '2026-02-20T08:00:00.000Z', 'Tiểu cầu', 50, 'Đã duyệt', 'BV001', 'BN001', 'A+', 'NV003');
+INSERT OR IGNORE INTO PHIEU_XUAT VALUES ('PX001', '2026-02-20T10:00:00.000Z', 50, 'YC001', 'NV003');
+INSERT OR IGNORE INTO CHI_TIET_XUAT VALUES ('PX001', 'TP001', 'Hòa hợp');
+INSERT OR IGNORE INTO VAI_TRO VALUES
   ('ADMIN', 'Quản trị'), ('STAFF', 'Nhân viên'), ('DONOR', 'Người hiến'), ('HOSPITAL', 'Bệnh viện');
-INSERT INTO TAI_KHOAN VALUES
+INSERT OR IGNORE INTO TAI_KHOAN VALUES
   ('TK001', 'admin', 'Admin@123', 'BLOODCHAIN', 'admin@bloodchain.local', 'ADMIN', 'NV001', NULL, NULL, 'Hoạt động'),
   ('TK002', 'nhanvien01', 'Nhanvien@123', 'Hoàng Ngọc Thịnh', 'thinh@bloodchain.local', 'STAFF', 'NV002', NULL, NULL, 'Hoạt động'),
   ('TK003', 'benhvien01', 'Benhvien@123', 'Bệnh viện Bạch Mai', 'bachmai@bloodchain.local', 'HOSPITAL', NULL, NULL, 'BV001', 'Hoạt động'),
@@ -111,7 +105,7 @@ async function handleApi(request, env, url) {
   if (method === 'POST' && path === '/admin/reset-database') {
     await db.exec(RESET_SQL)
     await db.exec(SEED_SQL)
-    return json({ ok: true, message: 'Đã reset D1 database về dữ liệu mẫu.' })
+    return json({ ok: true, message: 'Đã reset dữ liệu vận hành. Tài khoản và quyền được giữ nguyên.' })
   }
 
   if (method === 'POST' && path === '/auth/login') return login(db, body)

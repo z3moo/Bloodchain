@@ -38,7 +38,7 @@ function remove(account) {
   emit('delete-account', account.username)
 }
 function resetDatabase() {
-  const confirmed = window.confirm('Reset toàn bộ database về dữ liệu mẫu? Tất cả dữ liệu đã thêm sẽ bị xóa.')
+  const confirmed = window.confirm('Reset dữ liệu vận hành về mẫu? Tài khoản và quyền hiện có sẽ được giữ nguyên.')
   if (confirmed) emit('reset-database')
 }
 </script>
@@ -95,14 +95,14 @@ function resetDatabase() {
     <section class="table-card danger-zone">
       <div class="section-title">
         <div>
-          <h3>Reset database</h3>
-          <p>Chỉ admin dùng khi muốn xóa dữ liệu test và tạo lại dữ liệu mẫu ban đầu.</p>
+          <h3>Reset dữ liệu vận hành</h3>
+          <p>Chỉ admin dùng khi muốn xóa dữ liệu nghiệp vụ test và tạo lại dữ liệu mẫu. Tài khoản và quyền được giữ nguyên.</p>
         </div>
       </div>
       <p v-if="databaseResetError" class="login-error">{{ databaseResetError }}</p>
       <p v-if="databaseResetMessage" class="login-success">{{ databaseResetMessage }}</p>
       <button class="btn danger" type="button" :disabled="resettingDatabase" @click="resetDatabase">
-        {{ resettingDatabase ? 'Đang reset database...' : 'Reset toàn bộ database' }}
+        {{ resettingDatabase ? 'Đang reset dữ liệu...' : 'Reset dữ liệu vận hành' }}
       </button>
     </section>
   </section>

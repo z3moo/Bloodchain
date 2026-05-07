@@ -1,5 +1,5 @@
 <script setup>
-import { computed, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import Dashboard from './views/Dashboard.vue'
 import Donors from './views/Donors.vue'
 import Campaigns from './views/Campaigns.vue'
@@ -13,6 +13,8 @@ import Exports from './views/Exports.vue'
 import Reports from './views/Reports.vue'
 import Accounts from './views/Accounts.vue'
 import { api } from './api'
+
+const SESSION_STORAGE_KEY = 'bloodchain.currentUser'
 
 const modules = [
   { key: 'dashboard', label: 'T\u1ed5ng quan', component: Dashboard, group: '\u0110i\u1ec1u h\u00e0nh', access: ['admin', 'staff'] },
@@ -40,8 +42,8 @@ const registerForm = ref({ displayName: '', username: '', password: '', confirmP
 const registerError = ref('')
 const registerSuccess = ref('')
 const authMode = ref('login')
-const currentUser = ref(null)
-const activeKey = ref('dashboard')
+const currentUser = ref(readStoredUser())
+const activeKey = ref(routeKeyFromLocation() || 'dashboard')
 const activeRoleKey = computed(() => currentUser.value?.role || '')
 const mobileOpen = ref(false)
 
@@ -54,26 +56,70 @@ const groupedModules = computed(() => modules
     return groups
   }, {}))
 
+function readStoredUser() {
+  try {
+    const raw = window.localStorage.getItem(SESSION_STORAGE_KEY)
+    const parsed = raw ? JSON.parse(raw) : null
+    return parsed?.username && parsed?.role ? parsed : null
+  } catch {
+    return null
+  }
+}
+function rememberUser(account) {
+  window.localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(account))
+}
+function forgetUser() {
+  window.localStorage.removeItem(SESSION_STORAGE_KEY)
+}
+function routeKeyFromLocation() {
+  const key = window.location.pathname.replace(/^\/+|\/+$/g, '')
+  return modules.some((item) => item.key === key) ? key : ''
+}
+function pathForKey(key) {
+  return `/${key}`
+}
+function setRoute(key, replace = false) {
+  const nextPath = pathForKey(key)
+  if (window.location.pathname === nextPath) return
+  const method = replace ? 'replaceState' : 'pushState'
+  window.history[method]({ key }, '', nextPath)
+}
+function firstAllowedModule(roleKey) {
+  return modules.find((item) => item.access.includes(roleKey)) || modules[0]
+}
+function moduleForRoute(roleKey) {
+  const requestedKey = routeKeyFromLocation()
+  const requested = modules.find((item) => item.key === requestedKey)
+  if (requested?.access.includes(roleKey)) return requested
+  return firstAllowedModule(roleKey)
+}
+function syncRouteToAccess(replace = false) {
+  if (!currentUser.value) return
+  const next = moduleForRoute(currentUser.value.role)
+  activeKey.value = next.key
+  setRoute(next.key, replace || routeKeyFromLocation() !== next.key)
+}
 function canOpen(item) {
   return item.access.includes(activeRoleKey.value)
 }
 function navigate(item) {
   if (!canOpen(item)) return
   activeKey.value = item.key
+  setRoute(item.key)
   mobileOpen.value = false
 }
 function openModule(key) {
   const item = modules.find((module) => module.key === key)
   if (item) navigate(item)
 }
-function firstAllowedModule(roleKey) {
-  return modules.find((item) => item.access.includes(roleKey)) || modules[0]
-}
 function login() {
   return api.create('/auth/login', loginForm.value)
     .then((account) => {
       currentUser.value = account
-      activeKey.value = firstAllowedModule(account.role).key
+      rememberUser(account)
+      const next = moduleForRoute(account.role)
+      activeKey.value = next.key
+      setRoute(next.key, true)
       loginError.value = ''
       return loadAccounts()
     })
@@ -96,15 +142,15 @@ function registerDonor() {
   registerSuccess.value = ''
 
   if (!displayName.trim() || !username.trim() || !password) {
-    registerError.value = 'Vui lòng nhập đầy đủ họ tên, tên đăng nhập và mật khẩu.'
+    registerError.value = 'Vui l\u00f2ng nh\u1eadp \u0111\u1ea7y \u0111\u1ee7 h\u1ecd t\u00ean, t\u00ean \u0111\u0103ng nh\u1eadp v\u00e0 m\u1eadt kh\u1ea9u.'
     return
   }
   if (password !== confirmPassword) {
-    registerError.value = 'Mật khẩu xác nhận không khớp.'
+    registerError.value = 'M\u1eadt kh\u1ea9u x\u00e1c nh\u1eadn kh\u00f4ng kh\u1edbp.'
     return
   }
   if (accounts.value.some((item) => item.username.toLowerCase() === username.trim().toLowerCase())) {
-    registerError.value = 'Tên đăng nhập đã tồn tại.'
+    registerError.value = 'T\u00ean \u0111\u0103ng nh\u1eadp \u0111\u00e3 t\u1ed3n t\u1ea1i.'
     return
   }
 
@@ -115,7 +161,7 @@ function registerDonor() {
   })
     .then(() => {
       registerForm.value = { displayName: '', username: '', password: '', confirmPassword: '' }
-      registerSuccess.value = 'Đăng ký tài khoản người hiến thành công. Bạn có thể đăng nhập ngay.'
+      registerSuccess.value = '\u0110\u0103ng k\u00fd t\u00e0i kho\u1ea3n ng\u01b0\u1eddi hi\u1ebfn th\u00e0nh c\u00f4ng. B\u1ea1n c\u00f3 th\u1ec3 \u0111\u0103ng nh\u1eadp ngay.'
       authMode.value = 'register'
       return loadAccounts()
     })
@@ -127,6 +173,9 @@ function loadAccounts() {
   return api.list('/accounts')
     .then((items) => {
       accounts.value = items
+      if (currentUser.value && !items.some((item) => item.username === currentUser.value.username)) {
+        logout()
+      }
     })
     .catch(() => {
       accounts.value = []
@@ -152,7 +201,7 @@ function resetDatabase() {
   databaseResetError.value = ''
   return api.create('/admin/reset-database', {})
     .then((result) => {
-      databaseResetMessage.value = result.message || 'Đã reset database.'
+      databaseResetMessage.value = result.message || '\u0110\u00e3 reset d\u1eef li\u1ec7u v\u1eadn h\u00e0nh. T\u00e0i kho\u1ea3n v\u00e0 quy\u1ec1n \u0111\u01b0\u1ee3c gi\u1eef nguy\u00ean.'
       return loadAccounts()
     })
     .catch((error) => {
@@ -164,11 +213,23 @@ function resetDatabase() {
 }
 function logout() {
   currentUser.value = null
+  forgetUser()
   loginForm.value = { username: '', password: '' }
   activeKey.value = 'dashboard'
+  window.history.replaceState({}, '', '/')
+}
+function handlePopState() {
+  syncRouteToAccess(true)
 }
 
-loadAccounts()
+onMounted(() => {
+  window.addEventListener('popstate', handlePopState)
+  syncRouteToAccess(true)
+  loadAccounts()
+})
+onUnmounted(() => {
+  window.removeEventListener('popstate', handlePopState)
+})
 </script>
 
 <template>
