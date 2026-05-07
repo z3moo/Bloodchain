@@ -152,7 +152,7 @@ function resetDatabase() {
   databaseResetError.value = ''
   return api.create('/admin/reset-database', {})
     .then((result) => {
-      databaseResetMessage.value = result.message || '?? reset database.'
+      databaseResetMessage.value = result.message || 'Đã reset database.'
       return loadAccounts()
     })
     .catch((error) => {

@@ -104,7 +104,7 @@ onMounted(() => {
       <div class="section-title">
         <div>
           <h3>Danh sách</h3>
-          <p>Dữ liệu đang được đọc trực tiếp từ SQL Server.</p>
+          <p>Dữ liệu đang được đọc trực tiếp từ Cloudflare D1.</p>
         </div>
       </div>
       <div class="table-wrap">
