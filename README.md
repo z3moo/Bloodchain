@@ -61,14 +61,8 @@ The frontend defaults to same-origin `/api`, so no frontend API URL is needed.
 - Hospital: `benhvien01` / `Benhvien@123`
 - Donor: `nguoihien01` / `Nguoihien@123`
 
-## Legacy local Express backend
-
-`backend/` is kept for local SQL Server demos, but Cloudflare deployment no longer needs a separate backend host. D1 is the production database for the Worker deployment.
-
 ## Project layout
 
 - `frontend/` - Vue/Vite app
 - `worker/` - Cloudflare Worker API + static asset entry point
 - `migrations/` - Cloudflare D1 schema and seed data
-- `backend/` - legacy Express + SQL Server backend for local demos
-- `database/` - original SQL Server schema scripts
