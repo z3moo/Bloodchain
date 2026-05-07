@@ -9,9 +9,9 @@
     "dev:worker": "npx wrangler dev",
     "dev:backend": "npm --prefix backend run dev",
     "dev:frontend": "npm --prefix frontend run dev",
-    "db:create": "npx wrangler d1 create bloodchain-db",
-    "db:migrate:local": "npx wrangler d1 migrations apply bloodchain-db --local",
-    "db:migrate:remote": "npx wrangler d1 migrations apply bloodchain-db --remote",
+    "db:create": "npx wrangler d1 create bloodchain_db",
+    "db:migrate:local": "npx wrangler d1 migrations apply bloodchain_db --local",
+    "db:migrate:remote": "npx wrangler d1 migrations apply bloodchain_db --remote",
     "deploy:cloudflare": "npm run db:migrate:remote && npx wrangler deploy"
   }
 }

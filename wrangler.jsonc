@@ -14,8 +14,8 @@
   "d1_databases": [
     {
       "binding": "DB",
-      "database_name": "bloodchain-db",
-      "database_id": "00000000-0000-0000-0000-000000000000"
+      "database_name": "bloodchain_db",
+      "database_id": "ffef7db8-85e4-45f9-b447-dac580b0edce"
     }
   ]
 }

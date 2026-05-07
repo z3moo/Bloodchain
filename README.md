@@ -10,17 +10,20 @@ The deployed Worker now serves both parts of the app:
 - `worker/src/index.js` implements the `/api/*` routes directly in the Worker.
 - `migrations/0001_initial.sql` creates and seeds the Cloudflare D1 database.
 
-### 1. Create the D1 database
+### 1. D1 database
+
+This repo is configured for the Cloudflare D1 database:
+
+```txt
+name: bloodchain_db
+id: ffef7db8-85e4-45f9-b447-dac580b0edce
+```
+
+If you need to recreate it later:
 
 ```bash
 npx wrangler login
 npm run db:create
-```
-
-Copy the `database_id` printed by Wrangler into `wrangler.jsonc`, replacing:
-
-```json
-"database_id": "00000000-0000-0000-0000-000000000000"
 ```
 
 ### 2. Apply migrations
