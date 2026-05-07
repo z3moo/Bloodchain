@@ -40,13 +40,13 @@ npm run dev:worker
 
 ```bash
 npm run build
-npx wrangler deploy
+npm run deploy:worker
 ```
 
-For Cloudflare's GitHub integration, keep:
+For Cloudflare's GitHub integration, use:
 
 - Build command: `npm run build`
-- Deploy command: `npx wrangler deploy`
+- Deploy command: `npm run deploy:cloudflare`
 - Worker config: `wrangler.jsonc`
 
 The frontend defaults to same-origin `/api`, so no frontend API URL is needed.
