@@ -1,0 +1,135 @@
+﻿/*
+  BLOODCHAIN - Dang nhap va phan quyen don gian
+  Chay sau 00_schema.sql
+
+  Luu y:
+  - Mat khau dang luu dang text de de hoc va de test.
+  - Khi lam do an hoan chinh thi nen bam mat khau.
+  - File nay dung bang tai khoan rieng de mo phong dang nhap.
+*/
+
+IF OBJECT_ID('dbo.vw_TaiKhoan', 'V') IS NOT NULL DROP VIEW dbo.vw_TaiKhoan;
+GO
+IF OBJECT_ID('dbo.sp_XoaTaiKhoan', 'P') IS NOT NULL DROP PROCEDURE dbo.sp_XoaTaiKhoan;
+GO
+IF OBJECT_ID('dbo.sp_ThuHoiStaff', 'P') IS NOT NULL DROP PROCEDURE dbo.sp_ThuHoiStaff;
+GO
+IF OBJECT_ID('dbo.sp_ChuyenThanhStaff', 'P') IS NOT NULL DROP PROCEDURE dbo.sp_ChuyenThanhStaff;
+GO
+IF OBJECT_ID('dbo.sp_DangKyNguoiHien', 'P') IS NOT NULL DROP PROCEDURE dbo.sp_DangKyNguoiHien;
+GO
+IF OBJECT_ID('dbo.sp_DangNhap', 'P') IS NOT NULL DROP PROCEDURE dbo.sp_DangNhap;
+GO
+IF OBJECT_ID('dbo.TAI_KHOAN', 'U') IS NOT NULL DROP TABLE dbo.TAI_KHOAN;
+IF OBJECT_ID('dbo.VAI_TRO', 'U') IS NOT NULL DROP TABLE dbo.VAI_TRO;
+GO
+
+CREATE TABLE VAI_TRO (
+  MaVaiTro VARCHAR(20) PRIMARY KEY,
+  TenVaiTro NVARCHAR(100)
+);
+GO
+
+CREATE TABLE TAI_KHOAN (
+  MaTaiKhoan VARCHAR(20) PRIMARY KEY,
+  TenDangNhap VARCHAR(50),
+  MatKhau VARCHAR(50),
+  HoTen NVARCHAR(120),
+  Email VARCHAR(120),
+  VaiTro VARCHAR(20),
+  MaNV VARCHAR(20),
+  MaNguoiHien VARCHAR(20),
+  MaBV VARCHAR(20),
+  TrangThai NVARCHAR(20),
+  FOREIGN KEY (VaiTro) REFERENCES VAI_TRO(MaVaiTro),
+  FOREIGN KEY (MaNV) REFERENCES NHAN_VIEN(MaNV),
+  FOREIGN KEY (MaNguoiHien) REFERENCES NGUOI_HIEN(MaNguoiHien),
+  FOREIGN KEY (MaBV) REFERENCES BENH_VIEN(MaBV)
+);
+GO
+
+INSERT INTO VAI_TRO VALUES ('ADMIN', NCHAR(81) + NCHAR(117) + NCHAR(7843) + NCHAR(110) + NCHAR(32) + NCHAR(116) + NCHAR(114) + NCHAR(7883));
+INSERT INTO VAI_TRO VALUES ('STAFF', NCHAR(78) + NCHAR(104) + NCHAR(226) + NCHAR(110) + NCHAR(32) + NCHAR(118) + NCHAR(105) + NCHAR(234) + NCHAR(110));
+INSERT INTO VAI_TRO VALUES ('DONOR', NCHAR(78) + NCHAR(103) + NCHAR(432) + NCHAR(7901) + NCHAR(105) + NCHAR(32) + NCHAR(104) + NCHAR(105) + NCHAR(7871) + NCHAR(110));
+INSERT INTO VAI_TRO VALUES ('HOSPITAL', NCHAR(66) + NCHAR(7879) + NCHAR(110) + NCHAR(104) + NCHAR(32) + NCHAR(118) + NCHAR(105) + NCHAR(7879) + NCHAR(110));
+GO
+
+INSERT INTO TAI_KHOAN VALUES ('TK001', 'admin', 'Admin@123', N'BLOODCHAIN', 'admin@bloodchain.local', 'ADMIN', 'NV001', NULL, NULL, NCHAR(72) + NCHAR(111) + NCHAR(7841) + NCHAR(116) + NCHAR(32) + NCHAR(273) + NCHAR(7897) + NCHAR(110) + NCHAR(103));
+INSERT INTO TAI_KHOAN VALUES ('TK002', 'nhanvien01', 'Nhanvien@123', NCHAR(72) + NCHAR(111) + NCHAR(224) + NCHAR(110) + NCHAR(103) + NCHAR(32) + NCHAR(78) + NCHAR(103) + NCHAR(7885) + NCHAR(99) + NCHAR(32) + NCHAR(84) + NCHAR(104) + NCHAR(7883) + NCHAR(110) + NCHAR(104), 'thinh@bloodchain.local', 'STAFF', 'NV002', NULL, NULL, NCHAR(72) + NCHAR(111) + NCHAR(7841) + NCHAR(116) + NCHAR(32) + NCHAR(273) + NCHAR(7897) + NCHAR(110) + NCHAR(103));
+INSERT INTO TAI_KHOAN VALUES ('TK003', 'benhvien01', 'Benhvien@123', NCHAR(66) + NCHAR(7879) + NCHAR(110) + NCHAR(104) + NCHAR(32) + NCHAR(118) + NCHAR(105) + NCHAR(7879) + NCHAR(110) + NCHAR(32) + NCHAR(66) + NCHAR(7841) + NCHAR(99) + NCHAR(104) + NCHAR(32) + NCHAR(77) + NCHAR(97) + NCHAR(105), 'bachmai@bloodchain.local', 'HOSPITAL', NULL, NULL, 'BV001', NCHAR(72) + NCHAR(111) + NCHAR(7841) + NCHAR(116) + NCHAR(32) + NCHAR(273) + NCHAR(7897) + NCHAR(110) + NCHAR(103));
+INSERT INTO TAI_KHOAN VALUES ('TK004', 'nguoihien01', 'Nguoihien@123', NCHAR(78) + NCHAR(103) + NCHAR(117) + NCHAR(121) + NCHAR(7877) + NCHAR(110) + NCHAR(32) + NCHAR(77) + NCHAR(105) + NCHAR(110) + NCHAR(104) + NCHAR(32) + NCHAR(65) + NCHAR(110) + NCHAR(104), 'minhanh@bloodchain.local', 'DONOR', NULL, 'NH001', NULL, NCHAR(72) + NCHAR(111) + NCHAR(7841) + NCHAR(116) + NCHAR(32) + NCHAR(273) + NCHAR(7897) + NCHAR(110) + NCHAR(103));
+GO
+
+CREATE PROCEDURE sp_DangNhap
+  @TenDangNhap VARCHAR(50),
+  @MatKhau VARCHAR(50)
+AS
+BEGIN
+  SELECT *
+  FROM TAI_KHOAN
+  WHERE TenDangNhap = @TenDangNhap
+    AND MatKhau = @MatKhau;
+END;
+GO
+
+CREATE PROCEDURE sp_DangKyNguoiHien
+  @MaTaiKhoan VARCHAR(20),
+  @TenDangNhap VARCHAR(50),
+  @MatKhau VARCHAR(50),
+  @HoTen NVARCHAR(120),
+  @Email VARCHAR(120),
+  @MaNguoiHien VARCHAR(20)
+AS
+BEGIN
+  INSERT INTO TAI_KHOAN
+  VALUES (@MaTaiKhoan, @TenDangNhap, @MatKhau, @HoTen, @Email, 'DONOR', NULL, @MaNguoiHien, NULL, NCHAR(72) + NCHAR(111) + NCHAR(7841) + NCHAR(116) + NCHAR(32) + NCHAR(273) + NCHAR(7897) + NCHAR(110) + NCHAR(103));
+END;
+GO
+
+CREATE PROCEDURE sp_ChuyenThanhStaff
+  @TenDangNhap VARCHAR(50)
+AS
+BEGIN
+  UPDATE TAI_KHOAN
+  SET VaiTro = 'STAFF'
+  WHERE TenDangNhap = @TenDangNhap
+    AND VaiTro <> 'ADMIN';
+END;
+GO
+
+CREATE PROCEDURE sp_ThuHoiStaff
+  @TenDangNhap VARCHAR(50),
+  @VaiTroMoi VARCHAR(20)
+AS
+BEGIN
+  UPDATE TAI_KHOAN
+  SET VaiTro = @VaiTroMoi
+  WHERE TenDangNhap = @TenDangNhap
+    AND VaiTro = 'STAFF';
+END;
+GO
+
+CREATE PROCEDURE sp_XoaTaiKhoan
+  @TenDangNhap VARCHAR(50)
+AS
+BEGIN
+  DELETE FROM TAI_KHOAN
+  WHERE TenDangNhap = @TenDangNhap
+    AND VaiTro <> 'ADMIN';
+END;
+GO
+
+CREATE VIEW vw_TaiKhoan AS
+SELECT MaTaiKhoan, TenDangNhap, HoTen, Email, VaiTro, TrangThai
+FROM TAI_KHOAN;
+GO
+
+-- Vi du:
+-- EXEC sp_DangNhap 'admin', 'Admin@123';
+-- EXEC sp_DangKyNguoiHien 'TK005', 'nguoihien02', '123456', NCHAR(78) + NCHAR(103) + NCHAR(63) + NCHAR(63) + NCHAR(105) + NCHAR(32) + NCHAR(104) + NCHAR(105) + NCHAR(63) + NCHAR(110) + NCHAR(32) + NCHAR(48) + NCHAR(50), 'nh02@mail.com', 'NH002';
+-- EXEC sp_ChuyenThanhStaff 'benhvien01';
+-- EXEC sp_ThuHoiStaff 'benhvien01', 'HOSPITAL';
+-- EXEC sp_XoaTaiKhoan 'nguoihien01';
+
+
+

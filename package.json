@@ -1,0 +1,13 @@
+{
+  "name": "bloodchain",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "npm --prefix frontend ci && npm --prefix frontend run build",
+    "deploy:worker": "npm run build && npx wrangler deploy",
+    "dev:worker": "npx wrangler dev",
+    "dev:backend": "npm --prefix backend run dev",
+    "dev:frontend": "npm --prefix frontend run dev"
+  }
+}
