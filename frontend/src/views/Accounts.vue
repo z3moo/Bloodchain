@@ -10,7 +10,7 @@ defineProps({
 const emit = defineEmits(['promote-staff', 'revoke-staff', 'delete-account', 'reset-database'])
 
 const labels = {
-  admin: 'BLOODCHAIN',
+  admin: 'Quản trị',
   staff: 'Nh\u00e2n vi\u00ean trung t\u00e2m',
   hospital: 'B\u1ec7nh vi\u1ec7n',
   donor: 'Ng\u01b0\u1eddi hi\u1ebfn',
@@ -38,7 +38,7 @@ function remove(account) {
   emit('delete-account', account.username)
 }
 function resetDatabase() {
-  const confirmed = window.confirm('Reset dữ liệu vận hành về mẫu? Tài khoản và quyền hiện có sẽ được giữ nguyên.')
+  const confirmed = window.confirm('Khôi phục dữ liệu vận hành về mẫu? Tài khoản và quyền hiện có sẽ được giữ nguyên.')
   if (confirmed) emit('reset-database')
 }
 </script>
@@ -95,14 +95,14 @@ function resetDatabase() {
     <section class="table-card danger-zone">
       <div class="section-title">
         <div>
-          <h3>Reset dữ liệu vận hành</h3>
-          <p>Chỉ admin dùng khi muốn xóa dữ liệu nghiệp vụ test và tạo lại dữ liệu mẫu. Tài khoản và quyền được giữ nguyên.</p>
+          <h3>Khôi phục dữ liệu mẫu</h3>
+          <p>Chỉ quản trị dùng khi muốn xóa dữ liệu nghiệp vụ và khôi phục lại dữ liệu mẫu. Tài khoản và quyền được giữ nguyên.</p>
         </div>
       </div>
       <p v-if="databaseResetError" class="login-error">{{ databaseResetError }}</p>
       <p v-if="databaseResetMessage" class="login-success">{{ databaseResetMessage }}</p>
       <button class="btn danger" type="button" :disabled="resettingDatabase" @click="resetDatabase">
-        {{ resettingDatabase ? 'Đang reset dữ liệu...' : 'Reset dữ liệu vận hành' }}
+        {{ resettingDatabase ? 'Đang khôi phục dữ liệu...' : 'Khôi phục dữ liệu mẫu' }}
       </button>
     </section>
   </section>

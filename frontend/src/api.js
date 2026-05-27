@@ -25,8 +25,6 @@ export const api = {
   update: (resource, id, payload) => request(`${resource}/${id}`, { method: 'PUT', body: payload }),
   patch: (resource, id, payload) => request(`${resource}/${id}`, { method: 'PATCH', body: payload }),
   remove: (resource, id) => request(`${resource}/${id}`, { method: 'DELETE' }),
-  separateComponents: (maGoiMau) => request(`/components/separate/${maGoiMau}`, { method: 'POST' }),
-  suggestFIFO: (params) => request(`/exports/suggest?${new URLSearchParams(params)}`),
   reports: {
     inventory: () => request('/reports/inventory'),
     expiring: () => request('/reports/expiring'),

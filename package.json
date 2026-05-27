@@ -4,13 +4,11 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "npm --prefix frontend ci && npm --prefix frontend run build",
-    "deploy:worker": "npm run build && npm run db:migrate:remote && npx wrangler deploy",
-    "dev:worker": "npx wrangler dev",
+    "install:all": "npm --prefix backend install && npm --prefix frontend install",
+    "build": "npm --prefix frontend run build",
+    "dev:backend": "npm --prefix backend run dev",
     "dev:frontend": "npm --prefix frontend run dev",
-    "db:create": "npx wrangler d1 create bloodchain_db",
-    "db:migrate:local": "npx wrangler d1 migrations apply bloodchain_db --local",
-    "db:migrate:remote": "npx wrangler d1 migrations apply bloodchain_db --remote",
-    "deploy:cloudflare": "npm run db:migrate:remote && npx wrangler deploy"
+    "start:backend": "npm --prefix backend run start",
+    "preview:frontend": "npm --prefix frontend run preview"
   }
 }

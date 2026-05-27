@@ -32,7 +32,7 @@ GO
 
 CREATE TABLE TAI_KHOAN (
   MaTaiKhoan VARCHAR(20) PRIMARY KEY,
-  TenDangNhap VARCHAR(50),
+  TenDangNhap VARCHAR(50) UNIQUE,
   MatKhau VARCHAR(50),
   HoTen NVARCHAR(120),
   Email VARCHAR(120),
@@ -68,7 +68,8 @@ BEGIN
   SELECT *
   FROM TAI_KHOAN
   WHERE TenDangNhap = @TenDangNhap
-    AND MatKhau = @MatKhau;
+    AND MatKhau = @MatKhau
+    AND TrangThai = NCHAR(72) + NCHAR(111) + NCHAR(7841) + NCHAR(116) + NCHAR(32) + NCHAR(273) + NCHAR(7897) + NCHAR(110) + NCHAR(103);
 END;
 GO
 

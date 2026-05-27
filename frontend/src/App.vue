@@ -162,7 +162,7 @@ function registerDonor() {
     .then(() => {
       registerForm.value = { displayName: '', username: '', password: '', confirmPassword: '' }
       registerSuccess.value = '\u0110\u0103ng k\u00fd t\u00e0i kho\u1ea3n ng\u01b0\u1eddi hi\u1ebfn th\u00e0nh c\u00f4ng. B\u1ea1n c\u00f3 th\u1ec3 \u0111\u0103ng nh\u1eadp ngay.'
-      authMode.value = 'register'
+      authMode.value = 'login'
       return loadAccounts()
     })
     .catch((error) => {
@@ -187,7 +187,7 @@ function promoteToStaff(username) {
 }
 function revokeStaff(username) {
   const account = accounts.value.find((item) => item.username === username)
-  const nextRole = account?.email?.includes('bloodchain.local') && account?.username?.includes('benhvien') ? 'hospital' : 'donor'
+  const nextRole = account?.hospitalId ? 'hospital' : 'donor'
   return api.patch('/accounts', `${username}/revoke`, { role: nextRole })
     .then(() => loadAccounts())
 }

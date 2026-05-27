@@ -33,18 +33,30 @@ DB_ENCRYPT=true
 DB_USE_WINDOWS_AUTH=true
 ```
 
-## 3. Chạy backend
+## 3. Khởi tạo database
+
+Bạn tự tạo database trước, sau đó chạy file theo thứ tự:
+
+1. `../database/00_schema.sql` - tạo bảng và dữ liệu mẫu
+2. `../database/02_auth_permissions.sql` - tạo tài khoản, phân quyền và stored procedure đăng nhập
+
+## 4. Chạy backend
 
 ```bash
 npm run dev
 ```
 
-## 4. Điều kiện database
+Backend mặc định chạy ở `http://localhost:3000`.
 
-Bạn tự tạo database trước, sau đó chạy file theo thứ tự:
+## 5. Chạy cùng frontend local
 
-1. `00_schema.sql` - tạo bảng và dữ liệu mẫu
-2. `02_auth_permissions.sql` - tạo tài khoản, phân quyền và stored procedure đăng nhập
+Từ thư mục gốc `bloodchain-local`, mở thêm terminal khác và chạy:
+
+```bash
+npm run dev:frontend
+```
+
+Frontend Vite sẽ chạy ở `http://localhost:5173` và proxy API sang backend local.
 
 ## API chính
 

@@ -17,6 +17,8 @@ const T = {
   missingLogin: 'Thi\u1ebfu t\u00ean \u0111\u0103ng nh\u1eadp ho\u1eb7c m\u1eadt kh\u1ea9u.',
   badLogin: 'T\u00ean \u0111\u0103ng nh\u1eadp ho\u1eb7c m\u1eadt kh\u1ea9u kh\u00f4ng \u0111\u00fang.',
   missingRegister: 'Thi\u1ebfu th\u00f4ng tin \u0111\u0103ng k\u00fd.',
+  duplicateUsername: 'T\u00ean \u0111\u0103ng nh\u1eadp \u0111\u00e3 t\u1ed3n t\u1ea1i.',
+  serverError: 'H\u1ec7 th\u1ed1ng \u0111ang b\u1eadn, vui l\u00f2ng th\u1eed l\u1ea1i sau.',
   other: 'Kh\u00e1c',
   bronze: '\u0110\u1ed3ng',
   no: 'Kh\u00f4ng',
@@ -33,6 +35,36 @@ const T = {
   compatible: 'H\u00f2a h\u1ee3p',
   plasmaWord: 'Huy\u1ebft',
   plateletWord: 'Ti\u1ec3u',
+}
+
+function safeError(res, error, status = 500) {
+  console.error('[bloodchain]', error)
+  const message = String(error?.originalError?.message || error?.message || '')
+  if (error?.number === 547 || /FOREIGN KEY|REFERENCE constraint/i.test(message)) {
+    return res.status(409).json({ message: 'Dữ liệu đang được dùng ở nơi khác, không thể xóa.' })
+  }
+  if (error?.number === 2627 || /UNIQUE KEY|duplicate key/i.test(message)) {
+    return res.status(409).json({ message: 'Giá trị đã tồn tại, vui lòng dùng giá trị khác.' })
+  }
+  res.status(status).json({ message: T.serverError })
+}
+
+async function deleteRow(pool, table, idColumn, idValue) {
+  await pool.request().input('_id', sql.VarChar(20), idValue).query(`DELETE FROM ${table} WHERE ${idColumn} = @_id`)
+}
+
+async function updateRow(pool, table, idColumn, idValue, updates) {
+  const setClauses = []
+  const request = pool.request().input('_id', sql.VarChar(20), idValue)
+  for (const [col, spec] of Object.entries(updates)) {
+    if (spec.raw !== undefined) {
+      setClauses.push(`${col} = ${spec.raw}`)
+    } else {
+      request.input(col, spec.type, spec.value)
+      setClauses.push(`${col} = @${col}`)
+    }
+  }
+  await request.query(`UPDATE ${table} SET ${setClauses.join(', ')} WHERE ${idColumn} = @_id`)
 }
 
 app.use(cors())
@@ -84,9 +116,11 @@ async function resetDatabase() {
   await runSqlFile(pool, '00_schema.sql')
   await runSqlFile(pool, '02_auth_permissions.sql')
 }
-async function nextId(pool, table, _column, prefix, width = 3) {
-  const result = await pool.request().query(`SELECT COUNT(*) AS total FROM ${table}`)
-  return `${prefix}${String(Number(result.recordset[0].total) + 1).padStart(width, '0')}`
+async function nextId(pool, table, column, prefix, width = 3) {
+  const result = await pool.request().query(
+    `SELECT ISNULL(MAX(CAST(SUBSTRING(${column}, ${prefix.length + 1}, ${width}) AS INT)), 0) AS maxId FROM ${table} WHERE ${column} LIKE '${prefix}%'`,
+  )
+  return `${prefix}${String(Number(result.recordset[0].maxId) + 1).padStart(width, '0')}`
 }
 async function firstValue(pool, query, fallback) {
   const result = await pool.request().query(query)
@@ -100,20 +134,24 @@ function mapAccount(row) {
     email: row.Email,
     role: String(row.VaiTro || '').toLowerCase(),
     status: row.TrangThai,
+    staffId: row.MaNV || null,
+    donorId: row.MaNguoiHien || null,
+    hospitalId: row.MaBV || null,
   }
 }
 
 app.get('/api/health', async (_req, res) => {
   try { await getPool(); res.json({ ok: true }) }
-  catch (error) { res.status(500).json({ ok: false, message: error.message }) }
+  catch (error) { console.error('[bloodchain]', error); res.status(500).json({ ok: false, message: T.serverError }) }
 })
 
 app.post('/api/admin/reset-database', async (_req, res) => {
   try {
     await resetDatabase()
-    res.json({ ok: true, message: 'Đã reset database về dữ liệu mẫu.' })
+    res.json({ ok: true, message: 'Đã khôi phục dữ liệu mẫu.' })
   } catch (error) {
-    res.status(500).json({ ok: false, message: error.message })
+    console.error('[bloodchain]', error)
+    res.status(500).json({ ok: false, message: T.serverError })
   }
 })
 
@@ -129,7 +167,7 @@ app.post('/api/auth/login', async (req, res) => {
     const user = result.recordset[0]
     if (!user) return res.status(401).json({ message: T.badLogin })
     res.json(mapAccount(user))
-  } catch (error) { res.status(500).json({ message: error.message }) }
+  } catch (error) { safeError(res, error) }
 })
 
 app.post('/api/auth/register', async (req, res) => {
@@ -137,44 +175,59 @@ app.post('/api/auth/register', async (req, res) => {
   if (!username || !password || !displayName) return res.status(400).json({ message: T.missingRegister })
   try {
     const pool = await getPool()
+    const existing = await pool.request()
+      .input('TenDangNhap', sql.VarChar(50), username)
+      .query('SELECT 1 AS hit FROM TAI_KHOAN WHERE TenDangNhap = @TenDangNhap')
+    if (existing.recordset.length) return res.status(409).json({ message: T.duplicateUsername })
     const accountId = await nextId(pool, 'TAI_KHOAN', 'MaTaiKhoan', 'TK')
     await pool.request()
       .input('MaTaiKhoan', sql.VarChar(20), accountId)
       .input('TenDangNhap', sql.VarChar(50), username)
       .input('MatKhau', sql.VarChar(50), password)
+      .input('HoTen', sql.NVarChar(120), displayName)
       .input('Email', sql.VarChar(120), email || '')
-      .query(`INSERT INTO TAI_KHOAN VALUES (@MaTaiKhoan, @TenDangNhap, @MatKhau, ${nText(displayName)}, @Email, 'DONOR', NULL, NULL, NULL, ${nText(T.active)})`)
+      .execute('sp_DangKyNguoiHien')
     const result = await pool.request().input('TenDangNhap', sql.VarChar(50), username).query('SELECT * FROM TAI_KHOAN WHERE TenDangNhap = @TenDangNhap')
     res.status(201).json(mapAccount(result.recordset[0]))
-  } catch (error) { res.status(500).json({ message: error.message }) }
+  } catch (error) { safeError(res, error) }
 })
 
 app.get('/api/accounts', async (_req, res) => {
   try { const pool = await getPool(); const result = await pool.request().query('SELECT * FROM TAI_KHOAN ORDER BY MaTaiKhoan'); res.json(result.recordset.map(mapAccount)) }
-  catch (error) { res.status(500).json({ message: error.message }) }
+  catch (error) { safeError(res, error) }
 })
 app.patch('/api/accounts/:username/promote', async (req, res) => {
   try { const pool = await getPool(); await pool.request().input('TenDangNhap', sql.VarChar(50), req.params.username).execute('sp_ChuyenThanhStaff'); const result = await pool.request().input('TenDangNhap', sql.VarChar(50), req.params.username).query('SELECT * FROM TAI_KHOAN WHERE TenDangNhap = @TenDangNhap'); res.json(mapAccount(result.recordset[0])) }
-  catch (error) { res.status(500).json({ message: error.message }) }
+  catch (error) { safeError(res, error) }
 })
 app.patch('/api/accounts/:username/revoke', async (req, res) => {
   const nextRole = req.body?.role === 'hospital' ? 'HOSPITAL' : 'DONOR'
   try { const pool = await getPool(); await pool.request().input('TenDangNhap', sql.VarChar(50), req.params.username).input('VaiTroMoi', sql.VarChar(20), nextRole).execute('sp_ThuHoiStaff'); const result = await pool.request().input('TenDangNhap', sql.VarChar(50), req.params.username).query('SELECT * FROM TAI_KHOAN WHERE TenDangNhap = @TenDangNhap'); res.json(mapAccount(result.recordset[0])) }
-  catch (error) { res.status(500).json({ message: error.message }) }
+  catch (error) { safeError(res, error) }
 })
 app.delete('/api/accounts/:username', async (req, res) => {
   try { const pool = await getPool(); await pool.request().input('TenDangNhap', sql.VarChar(50), req.params.username).execute('sp_XoaTaiKhoan'); res.status(204).end() }
-  catch (error) { res.status(500).json({ message: error.message }) }
+  catch (error) { safeError(res, error) }
 })
 
 app.get('/api/blood-groups', async (_req, res) => {
   try { const pool = await getPool(); const result = await pool.request().query('SELECT MaNhomMau AS id, TenNhomMau AS name FROM NHOM_MAU ORDER BY MaNhomMau'); res.json(result.recordset) }
-  catch (error) { res.status(500).json({ message: error.message }) }
+  catch (error) { safeError(res, error) }
+})
+
+app.get('/api/staff', async (_req, res) => {
+  try { const pool = await getPool(); const result = await pool.request().query('SELECT MaNV AS id, HoTen AS name, ChucVu AS role FROM NHAN_VIEN ORDER BY MaNV'); res.json(result.recordset) }
+  catch (error) { safeError(res, error) }
+})
+
+app.get('/api/storages', async (_req, res) => {
+  try { const pool = await getPool(); const result = await pool.request().query('SELECT MaViTri AS id, TenTu + N\' - Ngăn \' + CAST(Ngan AS NVARCHAR(10)) AS name FROM VI_TRI_KHO ORDER BY MaViTri'); res.json(result.recordset) }
+  catch (error) { safeError(res, error) }
 })
 
 app.get('/api/donors', async (_req, res) => {
-  try { const pool = await getPool(); const result = await pool.request().query('SELECT MaNguoiHien AS id, HoTen AS name, NgaySinh AS birthDate, SDT AS phone, MaNhomMau AS bloodGroup, BenhLy AS medicalHistory, DiemTichLuy AS points, HangThanhVien AS memberRank FROM NGUOI_HIEN ORDER BY MaNguoiHien'); res.json(result.recordset) }
-  catch (error) { res.status(500).json({ message: error.message }) }
+  try { const pool = await getPool(); const result = await pool.request().query('SELECT MaNguoiHien AS id, HoTen AS name, NgaySinh AS birthDate, GioiTinh AS gender, SDT AS phone, MaNhomMau AS bloodGroup, BenhLy AS medicalHistory, DiemTichLuy AS points, HangThanhVien AS memberRank FROM NGUOI_HIEN ORDER BY MaNguoiHien'); res.json(result.recordset) }
+  catch (error) { safeError(res, error) }
 })
 app.post('/api/donors', async (req, res) => {
   const body = req.body || {}
@@ -189,82 +242,251 @@ app.post('/api/donors', async (req, res) => {
       .input('MaNhomMau', sql.VarChar(5), body.bloodGroup || 'O+')
       .query(`INSERT INTO NGUOI_HIEN VALUES (@MaNguoiHien, ${nText(body.name || body.hoTen, T.newDonor)}, @NgaySinh, ${nText(body.gender, T.other)}, @CCCD, @SDT, ${nText(body.medicalHistory, T.no)}, @DiemTichLuy, ${nText(body.memberRank, T.bronze)}, @MaNhomMau)`)
     res.status(201).json({ id, ...body })
-  } catch (error) { res.status(500).json({ message: error.message }) }
+  } catch (error) { safeError(res, error) }
+})
+app.put('/api/donors/:id', async (req, res) => {
+  const body = req.body || {}
+  try {
+    const pool = await getPool()
+    await updateRow(pool, 'NGUOI_HIEN', 'MaNguoiHien', req.params.id, {
+      HoTen: { raw: nText(body.name, T.newDonor) },
+      NgaySinh: { type: sql.Date, value: body.birthDate ? new Date(body.birthDate) : new Date('2000-01-01') },
+      GioiTinh: { raw: nText(body.gender, T.other) },
+      SDT: { type: sql.VarChar(15), value: body.phone || '' },
+      BenhLy: { raw: nText(body.medicalHistory, T.no) },
+      DiemTichLuy: { type: sql.Int, value: asInt(body.points, 0) },
+      HangThanhVien: { raw: nText(body.memberRank, T.bronze) },
+      MaNhomMau: { type: sql.VarChar(5), value: body.bloodGroup || 'O+' },
+    })
+    res.json({ id: req.params.id, ...body })
+  } catch (error) { safeError(res, error) }
+})
+app.delete('/api/donors/:id', async (req, res) => {
+  try { const pool = await getPool(); await deleteRow(pool, 'NGUOI_HIEN', 'MaNguoiHien', req.params.id); res.status(204).end() }
+  catch (error) { safeError(res, error) }
 })
 
 app.get('/api/campaigns', async (_req, res) => {
   try { const pool = await getPool(); const result = await pool.request().query('SELECT MaChienDich AS id, TenChienDich AS name, DiaDiem AS location, ThoiGian AS time, SoLuongDuKien AS expected, SoLuongThucTe AS actual FROM CHIEN_DICH ORDER BY MaChienDich'); res.json(result.recordset) }
-  catch (error) { res.status(500).json({ message: error.message }) }
+  catch (error) { safeError(res, error) }
 })
 app.post('/api/campaigns', async (req, res) => {
   const body = req.body || {}
   try { const pool = await getPool(); const id = await nextId(pool, 'CHIEN_DICH', 'MaChienDich', 'CD'); await pool.request().input('MaChienDich', sql.VarChar(20), id).input('ThoiGian', sql.DateTime, asDateTime(body.time)).input('SoLuongDuKien', sql.Int, asInt(body.expected, 0)).input('SoLuongThucTe', sql.Int, asInt(body.actual, 0)).query(`INSERT INTO CHIEN_DICH VALUES (@MaChienDich, ${nText(body.name, T.newCampaign)}, ${nText(body.location)}, @ThoiGian, @SoLuongDuKien, @SoLuongThucTe)`); res.status(201).json({ id, ...body }) }
-  catch (error) { res.status(500).json({ message: error.message }) }
+  catch (error) { safeError(res, error) }
+})
+app.put('/api/campaigns/:id', async (req, res) => {
+  const body = req.body || {}
+  try {
+    const pool = await getPool()
+    await updateRow(pool, 'CHIEN_DICH', 'MaChienDich', req.params.id, {
+      TenChienDich: { raw: nText(body.name, T.newCampaign) },
+      DiaDiem: { raw: nText(body.location) },
+      ThoiGian: { type: sql.DateTime, value: asDateTime(body.time) },
+      SoLuongDuKien: { type: sql.Int, value: asInt(body.expected, 0) },
+      SoLuongThucTe: { type: sql.Int, value: asInt(body.actual, 0) },
+    })
+    res.json({ id: req.params.id, ...body })
+  } catch (error) { safeError(res, error) }
+})
+app.delete('/api/campaigns/:id', async (req, res) => {
+  try { const pool = await getPool(); await deleteRow(pool, 'CHIEN_DICH', 'MaChienDich', req.params.id); res.status(204).end() }
+  catch (error) { safeError(res, error) }
 })
 
 app.get('/api/hospitals', async (_req, res) => {
   try { const pool = await getPool(); const result = await pool.request().query('SELECT MaBV AS id, TenBV AS name, DiaChi AS address, SDT AS phone FROM BENH_VIEN ORDER BY MaBV'); res.json(result.recordset) }
-  catch (error) { res.status(500).json({ message: error.message }) }
+  catch (error) { safeError(res, error) }
 })
 app.post('/api/hospitals', async (req, res) => {
   const body = req.body || {}
   try { const pool = await getPool(); const id = await nextId(pool, 'BENH_VIEN', 'MaBV', 'BV'); await pool.request().input('MaBV', sql.VarChar(20), id).input('SDT', sql.VarChar(15), body.phone || '').query(`INSERT INTO BENH_VIEN VALUES (@MaBV, ${nText(body.name, T.newHospital)}, ${nText(body.address)}, @SDT)`); res.status(201).json({ id, ...body }) }
-  catch (error) { res.status(500).json({ message: error.message }) }
+  catch (error) { safeError(res, error) }
+})
+app.put('/api/hospitals/:id', async (req, res) => {
+  const body = req.body || {}
+  try {
+    const pool = await getPool()
+    await updateRow(pool, 'BENH_VIEN', 'MaBV', req.params.id, {
+      TenBV: { raw: nText(body.name, T.newHospital) },
+      DiaChi: { raw: nText(body.address) },
+      SDT: { type: sql.VarChar(15), value: body.phone || '' },
+    })
+    res.json({ id: req.params.id, ...body })
+  } catch (error) { safeError(res, error) }
+})
+app.delete('/api/hospitals/:id', async (req, res) => {
+  try { const pool = await getPool(); await deleteRow(pool, 'BENH_VIEN', 'MaBV', req.params.id); res.status(204).end() }
+  catch (error) { safeError(res, error) }
 })
 
 app.get('/api/patients', async (_req, res) => {
   try { const pool = await getPool(); const result = await pool.request().query('SELECT MaBenhNhan AS id, HoTen AS name, NgaySinh AS birthDate, MaNhomMau AS bloodGroup, BenhAn AS medicalRecord, MaBV AS hospitalId FROM BENH_NHAN ORDER BY MaBenhNhan'); res.json(result.recordset) }
-  catch (error) { res.status(500).json({ message: error.message }) }
+  catch (error) { safeError(res, error) }
 })
 app.post('/api/patients', async (req, res) => {
   const body = req.body || {}
   try { const pool = await getPool(); const id = await nextId(pool, 'BENH_NHAN', 'MaBenhNhan', 'BN'); const hospitalId = body.hospitalId || await firstValue(pool, 'SELECT TOP 1 MaBV AS value FROM BENH_VIEN ORDER BY MaBV', 'BV001'); await pool.request().input('MaBenhNhan', sql.VarChar(20), id).input('NgaySinh', sql.Date, body.birthDate ? new Date(body.birthDate) : new Date('1990-01-01')).input('MaNhomMau', sql.VarChar(5), body.bloodGroup || 'O+').input('MaBV', sql.VarChar(20), hospitalId).query(`INSERT INTO BENH_NHAN VALUES (@MaBenhNhan, ${nText(body.name, T.newPatient)}, @NgaySinh, ${nText(body.medicalRecord)}, @MaNhomMau, @MaBV)`); res.status(201).json({ id, ...body, hospitalId }) }
-  catch (error) { res.status(500).json({ message: error.message }) }
+  catch (error) { safeError(res, error) }
+})
+app.put('/api/patients/:id', async (req, res) => {
+  const body = req.body || {}
+  try {
+    const pool = await getPool()
+    await updateRow(pool, 'BENH_NHAN', 'MaBenhNhan', req.params.id, {
+      HoTen: { raw: nText(body.name, T.newPatient) },
+      NgaySinh: { type: sql.Date, value: body.birthDate ? new Date(body.birthDate) : new Date('1990-01-01') },
+      BenhAn: { raw: nText(body.medicalRecord) },
+      MaNhomMau: { type: sql.VarChar(5), value: body.bloodGroup || 'O+' },
+      MaBV: { type: sql.VarChar(20), value: body.hospitalId || 'BV001' },
+    })
+    res.json({ id: req.params.id, ...body })
+  } catch (error) { safeError(res, error) }
+})
+app.delete('/api/patients/:id', async (req, res) => {
+  try { const pool = await getPool(); await deleteRow(pool, 'BENH_NHAN', 'MaBenhNhan', req.params.id); res.status(204).end() }
+  catch (error) { safeError(res, error) }
 })
 
 app.get('/api/blood-bags', async (_req, res) => {
   try { const pool = await getPool(); const result = await pool.request().query('SELECT MaGoiMau AS id, NgayHien AS donatedAt, TheTich AS volume, TrangThaiKiemDinh AS testStatus, MaNguoiHien AS donorId, MaNhomMau AS bloodGroup, MaChienDich AS campaignId, MaNV_ThuNhan AS staffId FROM GOI_MAU_TOAN_PHAN ORDER BY MaGoiMau'); res.json(result.recordset) }
-  catch (error) { res.status(500).json({ message: error.message }) }
+  catch (error) { safeError(res, error) }
 })
 app.post('/api/blood-bags', async (req, res) => {
   const body = req.body || {}
   try { const pool = await getPool(); const id = await nextId(pool, 'GOI_MAU_TOAN_PHAN', 'MaGoiMau', 'GM'); const donorId = body.donorId || await firstValue(pool, 'SELECT TOP 1 MaNguoiHien AS value FROM NGUOI_HIEN ORDER BY MaNguoiHien', 'NH001'); const campaignId = body.campaignId || await firstValue(pool, 'SELECT TOP 1 MaChienDich AS value FROM CHIEN_DICH ORDER BY MaChienDich', 'CD001'); const staffId = body.staffId || await firstValue(pool, 'SELECT TOP 1 MaNV AS value FROM NHAN_VIEN ORDER BY MaNV', 'NV001'); await pool.request().input('MaGoiMau', sql.VarChar(20), id).input('NgayHien', sql.DateTime, asDateTime(body.donatedAt)).input('TheTich', sql.Int, asInt(body.volume, 350)).input('MaNguoiHien', sql.VarChar(20), donorId).input('MaNhomMau', sql.VarChar(5), body.bloodGroup || 'O+').input('MaChienDich', sql.VarChar(20), campaignId).input('MaNV_ThuNhan', sql.VarChar(20), staffId).query(`INSERT INTO GOI_MAU_TOAN_PHAN VALUES (@MaGoiMau, @NgayHien, @TheTich, ${nText(body.testStatus, T.waitingTest)}, @MaNguoiHien, @MaNhomMau, @MaChienDich, @MaNV_ThuNhan)`); res.status(201).json({ id, ...body, donorId, campaignId, staffId }) }
-  catch (error) { res.status(500).json({ message: error.message }) }
+  catch (error) { safeError(res, error) }
+})
+app.put('/api/blood-bags/:id', async (req, res) => {
+  const body = req.body || {}
+  try {
+    const pool = await getPool()
+    await updateRow(pool, 'GOI_MAU_TOAN_PHAN', 'MaGoiMau', req.params.id, {
+      NgayHien: { type: sql.DateTime, value: asDateTime(body.donatedAt) },
+      TheTich: { type: sql.Int, value: asInt(body.volume, 350) },
+      TrangThaiKiemDinh: { raw: nText(body.testStatus, T.waitingTest) },
+      MaNguoiHien: { type: sql.VarChar(20), value: body.donorId || 'NH001' },
+      MaNhomMau: { type: sql.VarChar(5), value: body.bloodGroup || 'O+' },
+      MaChienDich: { type: sql.VarChar(20), value: body.campaignId || 'CD001' },
+      MaNV_ThuNhan: { type: sql.VarChar(20), value: body.staffId || 'NV001' },
+    })
+    res.json({ id: req.params.id, ...body })
+  } catch (error) { safeError(res, error) }
+})
+app.delete('/api/blood-bags/:id', async (req, res) => {
+  try { const pool = await getPool(); await deleteRow(pool, 'GOI_MAU_TOAN_PHAN', 'MaGoiMau', req.params.id); res.status(204).end() }
+  catch (error) { safeError(res, error) }
 })
 
 app.get('/api/lab-tests', async (_req, res) => {
   try { const pool = await getPool(); const result = await pool.request().query('SELECT MaXetNghiem AS id, LoaiXetNghiem AS type, KetQua AS result, NgayXetNghiem AS testedAt, MaGoiMau AS bloodBagId, MaNV_ThucHien AS staffId FROM KET_QUA_XET_NGHIEM ORDER BY MaXetNghiem'); res.json(result.recordset) }
-  catch (error) { res.status(500).json({ message: error.message }) }
+  catch (error) { safeError(res, error) }
 })
 app.post('/api/lab-tests', async (req, res) => {
   const body = req.body || {}
   try { const pool = await getPool(); const id = await nextId(pool, 'KET_QUA_XET_NGHIEM', 'MaXetNghiem', 'XN'); const bloodBagId = body.bloodBagId || await firstValue(pool, 'SELECT TOP 1 MaGoiMau AS value FROM GOI_MAU_TOAN_PHAN ORDER BY MaGoiMau', 'GM001'); const staffId = body.staffId || await firstValue(pool, 'SELECT TOP 1 MaNV AS value FROM NHAN_VIEN ORDER BY MaNV', 'NV001'); await pool.request().input('MaXetNghiem', sql.VarChar(20), id).input('NgayXetNghiem', sql.DateTime, asDateTime(body.testedAt)).input('MaGoiMau', sql.VarChar(20), bloodBagId).input('MaNV_ThucHien', sql.VarChar(20), staffId).query(`INSERT INTO KET_QUA_XET_NGHIEM VALUES (@MaXetNghiem, ${nText(body.type, 'HIV')}, ${nText(body.result, T.negative)}, @NgayXetNghiem, @MaGoiMau, @MaNV_ThucHien)`); res.status(201).json({ id, ...body, bloodBagId, staffId }) }
-  catch (error) { res.status(500).json({ message: error.message }) }
+  catch (error) { safeError(res, error) }
+})
+app.put('/api/lab-tests/:id', async (req, res) => {
+  const body = req.body || {}
+  try {
+    const pool = await getPool()
+    await updateRow(pool, 'KET_QUA_XET_NGHIEM', 'MaXetNghiem', req.params.id, {
+      LoaiXetNghiem: { raw: nText(body.type, 'HIV') },
+      KetQua: { raw: nText(body.result, T.negative) },
+      NgayXetNghiem: { type: sql.DateTime, value: asDateTime(body.testedAt) },
+      MaGoiMau: { type: sql.VarChar(20), value: body.bloodBagId || 'GM001' },
+      MaNV_ThucHien: { type: sql.VarChar(20), value: body.staffId || 'NV001' },
+    })
+    res.json({ id: req.params.id, ...body })
+  } catch (error) { safeError(res, error) }
+})
+app.delete('/api/lab-tests/:id', async (req, res) => {
+  try { const pool = await getPool(); await deleteRow(pool, 'KET_QUA_XET_NGHIEM', 'MaXetNghiem', req.params.id); res.status(204).end() }
+  catch (error) { safeError(res, error) }
 })
 
 app.get('/api/components', async (_req, res) => {
   try { const pool = await getPool(); const result = await pool.request().query('SELECT MaThanhPhan AS id, LoaiThanhPhan AS type, TheTichThucTe AS volume, HanSuDung AS expiresAt, TrangThai AS status, MaGoiMau AS bloodBagId, MaViTri AS storageId FROM THANH_PHAN_MAU ORDER BY MaThanhPhan'); res.json(result.recordset) }
-  catch (error) { res.status(500).json({ message: error.message }) }
+  catch (error) { safeError(res, error) }
 })
 app.post('/api/components', async (req, res) => {
   const body = req.body || {}
   try { const pool = await getPool(); const id = await nextId(pool, 'THANH_PHAN_MAU', 'MaThanhPhan', 'TP'); const bloodBagId = body.bloodBagId || await firstValue(pool, 'SELECT TOP 1 MaGoiMau AS value FROM GOI_MAU_TOAN_PHAN ORDER BY MaGoiMau', 'GM001'); const storageId = body.storageId || await firstValue(pool, 'SELECT TOP 1 MaViTri AS value FROM VI_TRI_KHO ORDER BY MaViTri', 'VT001'); const expiresAt = body.expiresAt ? new Date(body.expiresAt) : new Date(Date.now() + 35 * 24 * 60 * 60 * 1000); await pool.request().input('MaThanhPhan', sql.VarChar(20), id).input('TheTichThucTe', sql.Int, asInt(body.volume, 250)).input('HanSuDung', sql.Date, expiresAt).input('MaGoiMau', sql.VarChar(20), bloodBagId).input('MaViTri', sql.VarChar(20), storageId).query(`INSERT INTO THANH_PHAN_MAU VALUES (@MaThanhPhan, ${nText(body.type, T.redCells)}, @TheTichThucTe, @HanSuDung, ${nText(body.status, T.ready)}, @MaGoiMau, @MaViTri)`); res.status(201).json({ id, ...body, bloodBagId, storageId }) }
-  catch (error) { res.status(500).json({ message: error.message }) }
+  catch (error) { safeError(res, error) }
+})
+app.put('/api/components/:id', async (req, res) => {
+  const body = req.body || {}
+  try {
+    const pool = await getPool()
+    await updateRow(pool, 'THANH_PHAN_MAU', 'MaThanhPhan', req.params.id, {
+      LoaiThanhPhan: { raw: nText(body.type, T.redCells) },
+      TheTichThucTe: { type: sql.Int, value: asInt(body.volume, 250) },
+      HanSuDung: { type: sql.Date, value: body.expiresAt ? new Date(body.expiresAt) : new Date(Date.now() + 35 * 24 * 60 * 60 * 1000) },
+      TrangThai: { raw: nText(body.status, T.ready) },
+      MaGoiMau: { type: sql.VarChar(20), value: body.bloodBagId || 'GM001' },
+      MaViTri: { type: sql.VarChar(20), value: body.storageId || 'VT001' },
+    })
+    res.json({ id: req.params.id, ...body })
+  } catch (error) { safeError(res, error) }
+})
+app.delete('/api/components/:id', async (req, res) => {
+  try { const pool = await getPool(); await deleteRow(pool, 'THANH_PHAN_MAU', 'MaThanhPhan', req.params.id); res.status(204).end() }
+  catch (error) { safeError(res, error) }
 })
 
 app.get('/api/requests', async (_req, res) => {
   try { const pool = await getPool(); const result = await pool.request().query('SELECT MaPhieuYC AS id, NgayYeuCau AS requestedAt, LoaiThanhPhanCan AS componentType, SoLuongML AS volume, TrangThaiDuyet AS status, MaBV AS hospitalId, MaBenhNhan AS patientId, MaNhomMau AS bloodGroup, MaNV_Duyet AS approverId FROM PHIEU_YEU_CAU ORDER BY MaPhieuYC'); res.json(result.recordset) }
-  catch (error) { res.status(500).json({ message: error.message }) }
+  catch (error) { safeError(res, error) }
 })
 app.post('/api/requests', async (req, res) => {
   const body = req.body || {}
   try { const pool = await getPool(); const id = await nextId(pool, 'PHIEU_YEU_CAU', 'MaPhieuYC', 'YC'); const hospitalId = body.hospitalId || await firstValue(pool, 'SELECT TOP 1 MaBV AS value FROM BENH_VIEN ORDER BY MaBV', 'BV001'); const patientId = body.patientId || await firstValue(pool, 'SELECT TOP 1 MaBenhNhan AS value FROM BENH_NHAN ORDER BY MaBenhNhan', 'BN001'); const approverId = body.approverId || await firstValue(pool, 'SELECT TOP 1 MaNV AS value FROM NHAN_VIEN ORDER BY MaNV', 'NV001'); await pool.request().input('MaPhieuYC', sql.VarChar(20), id).input('NgayYeuCau', sql.DateTime, asDateTime(body.requestedAt)).input('SoLuongML', sql.Int, asInt(body.volume, 250)).input('MaBV', sql.VarChar(20), hospitalId).input('MaBenhNhan', sql.VarChar(20), patientId).input('MaNhomMau', sql.VarChar(5), body.bloodGroup || 'O+').input('MaNV_Duyet', sql.VarChar(20), approverId).query(`INSERT INTO PHIEU_YEU_CAU VALUES (@MaPhieuYC, @NgayYeuCau, ${nText(body.componentType, T.redCells)}, @SoLuongML, ${nText(body.status, T.waitingApproval)}, @MaBV, @MaBenhNhan, @MaNhomMau, @MaNV_Duyet)`); res.status(201).json({ id, ...body, hospitalId, patientId, approverId }) }
-  catch (error) { res.status(500).json({ message: error.message }) }
+  catch (error) { safeError(res, error) }
+})
+app.put('/api/requests/:id', async (req, res) => {
+  const body = req.body || {}
+  try {
+    const pool = await getPool()
+    await updateRow(pool, 'PHIEU_YEU_CAU', 'MaPhieuYC', req.params.id, {
+      NgayYeuCau: { type: sql.DateTime, value: asDateTime(body.requestedAt) },
+      LoaiThanhPhanCan: { raw: nText(body.componentType, T.redCells) },
+      SoLuongML: { type: sql.Int, value: asInt(body.volume, 250) },
+      TrangThaiDuyet: { raw: nText(body.status, T.waitingApproval) },
+      MaBV: { type: sql.VarChar(20), value: body.hospitalId || 'BV001' },
+      MaBenhNhan: { type: sql.VarChar(20), value: body.patientId || 'BN001' },
+      MaNhomMau: { type: sql.VarChar(5), value: body.bloodGroup || 'O+' },
+      MaNV_Duyet: { type: sql.VarChar(20), value: body.approverId || 'NV001' },
+    })
+    res.json({ id: req.params.id, ...body })
+  } catch (error) { safeError(res, error) }
+})
+app.delete('/api/requests/:id', async (req, res) => {
+  try { const pool = await getPool(); await deleteRow(pool, 'PHIEU_YEU_CAU', 'MaPhieuYC', req.params.id); res.status(204).end() }
+  catch (error) { safeError(res, error) }
 })
 
 app.get('/api/exports', async (_req, res) => {
-  try { const pool = await getPool(); const result = await pool.request().query(`SELECT px.MaPhieuXuat AS id, px.NgayXuat AS exportedAt, px.TongTheTich AS totalVolume, px.MaPhieuYC AS requestId, px.MaNV_Xuat AS staffId, ctx.MaThanhPhan AS componentId, ctx.KetQuaPhanUngCheo AS crossMatch FROM PHIEU_XUAT px LEFT JOIN CHI_TIET_XUAT ctx ON ctx.MaPhieuXuat = px.MaPhieuXuat ORDER BY px.MaPhieuXuat`); res.json(result.recordset) }
-  catch (error) { res.status(500).json({ message: error.message }) }
+  try {
+    const pool = await getPool()
+    const result = await pool.request().query(`
+      SELECT px.MaPhieuXuat AS id,
+             px.NgayXuat AS exportedAt,
+             px.TongTheTich AS totalVolume,
+             px.MaPhieuYC AS requestId,
+             px.MaNV_Xuat AS staffId,
+             STUFF((SELECT ', ' + ctx2.MaThanhPhan
+                    FROM CHI_TIET_XUAT ctx2
+                    WHERE ctx2.MaPhieuXuat = px.MaPhieuXuat
+                    FOR XML PATH('')), 1, 2, '') AS componentId,
+             (SELECT TOP 1 ctx3.KetQuaPhanUngCheo
+              FROM CHI_TIET_XUAT ctx3
+              WHERE ctx3.MaPhieuXuat = px.MaPhieuXuat) AS crossMatch
+      FROM PHIEU_XUAT px
+      ORDER BY px.MaPhieuXuat
+    `)
+    res.json(result.recordset)
+  } catch (error) { safeError(res, error) }
 })
 app.post('/api/exports', async (req, res) => {
   const body = req.body || {}
@@ -278,7 +500,19 @@ app.post('/api/exports', async (req, res) => {
     await pool.request().input('MaPhieuXuat', sql.VarChar(20), id).input('MaThanhPhan', sql.VarChar(20), componentId).query(`INSERT INTO CHI_TIET_XUAT VALUES (@MaPhieuXuat, @MaThanhPhan, ${nText(body.crossMatch, T.compatible)})`)
     await pool.request().input('MaThanhPhan', sql.VarChar(20), componentId).query(`UPDATE THANH_PHAN_MAU SET TrangThai = ${nText(T.exported)} WHERE MaThanhPhan = @MaThanhPhan`)
     res.status(201).json({ id, ...body, requestId, staffId, componentId, totalVolume })
-  } catch (error) { res.status(500).json({ message: error.message }) }
+  } catch (error) { safeError(res, error) }
+})
+app.delete('/api/exports/:id', async (req, res) => {
+  try {
+    const pool = await getPool()
+    const components = await pool.request().input('_id', sql.VarChar(20), req.params.id).query('SELECT MaThanhPhan FROM CHI_TIET_XUAT WHERE MaPhieuXuat = @_id')
+    await pool.request().input('_id', sql.VarChar(20), req.params.id).query('DELETE FROM CHI_TIET_XUAT WHERE MaPhieuXuat = @_id')
+    await pool.request().input('_id', sql.VarChar(20), req.params.id).query('DELETE FROM PHIEU_XUAT WHERE MaPhieuXuat = @_id')
+    for (const row of components.recordset) {
+      await pool.request().input('mtp', sql.VarChar(20), row.MaThanhPhan).query(`UPDATE THANH_PHAN_MAU SET TrangThai = ${nText(T.ready)} WHERE MaThanhPhan = @mtp`)
+    }
+    res.status(204).end()
+  } catch (error) { safeError(res, error) }
 })
 
 app.get('/api/reports/inventory', async (_req, res) => {
@@ -297,17 +531,17 @@ app.get('/api/reports/inventory', async (_req, res) => {
       ORDER BY g.MaNhomMau
     `)
     res.json(result.recordset)
-  } catch (error) { res.status(500).json({ message: error.message }) }
+  } catch (error) { safeError(res, error) }
 })
 app.get('/api/reports/expiring', async (_req, res) => {
   try { const pool = await getPool(); const result = await pool.request().query('SELECT MaThanhPhan AS id, LoaiThanhPhan AS type, HanSuDung AS expiresAt, TrangThai AS status FROM THANH_PHAN_MAU WHERE HanSuDung <= DATEADD(day, 30, GETDATE()) ORDER BY HanSuDung'); res.json(result.recordset) }
-  catch (error) { res.status(500).json({ message: error.message }) }
+  catch (error) { safeError(res, error) }
 })
 app.get('/api/reports/campaigns', async (_req, res) => {
   try { const pool = await getPool(); const result = await pool.request().query('SELECT MaChienDich AS id, TenChienDich AS name, SoLuongDuKien AS expected, SoLuongThucTe AS actual FROM CHIEN_DICH ORDER BY MaChienDich'); res.json(result.recordset) }
-  catch (error) { res.status(500).json({ message: error.message }) }
+  catch (error) { safeError(res, error) }
 })
 
 app.listen(port, () => {
-  console.log(`Bloodchain backend running at http://localhost:${port}`)
+  console.log(`Bloodchain API ready at http://localhost:${port}`)
 })

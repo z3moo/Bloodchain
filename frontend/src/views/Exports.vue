@@ -1,21 +1,25 @@
-﻿<script setup>
+<script setup>
 import CrudPage from './CrudPage.vue'
 
 const fields = [
-  { key: 'requestId', label: 'Phiếu yêu cầu', default: 'YC001' },
-  { key: 'componentId', label: 'Túi máu đề xuất', default: 'TP001' },
-  { key: 'totalVolume', label: 'Tổng thể tích', type: 'number', default: 250 },
-  { key: 'crossMatch', label: 'Phản ứng chéo', default: 'Hòa hợp' },
-  { key: 'staffId', label: 'Nhân viên xuất', default: 'NV003' },
+  { key: 'requestId', label: 'Phiếu yêu cầu', optionsFrom: '/requests' },
+  { key: 'componentId', label: 'Thành phần xuất', optionsFrom: '/components' },
+  { key: 'totalVolume', label: 'Tổng thể tích (ml)', type: 'number', default: 250 },
+  { key: 'crossMatch', label: 'Phản ứng chéo', options: [
+    { id: 'Hòa hợp', name: 'Hòa hợp' },
+    { id: 'Không hòa hợp', name: 'Không hòa hợp' },
+  ], default: 'Hòa hợp' },
+  { key: 'staffId', label: 'Nhân viên xuất', optionsFrom: '/staff' },
 ]
 
 const columns = [
   { key: 'id', label: 'Phiếu xuất' },
   { key: 'exportedAt', label: 'Ngày xuất', type: 'datetime' },
   { key: 'requestId', label: 'Phiếu yêu cầu' },
-  { key: 'componentId', label: 'Túi máu' },
-  { key: 'totalVolume', label: 'Thể tích' },
+  { key: 'componentId', label: 'Thành phần' },
+  { key: 'totalVolume', label: 'Thể tích (ml)' },
   { key: 'crossMatch', label: 'Phản ứng chéo' },
+  { key: 'staffId', label: 'Nhân viên', lookup: 'staffId' },
 ]
 </script>
 

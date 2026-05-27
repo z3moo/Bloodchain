@@ -1,12 +1,12 @@
-﻿<script setup>
+<script setup>
 import CrudPage from './CrudPage.vue'
 
 const fields = [
   { key: 'name', label: 'Họ tên bệnh nhân', placeholder: 'Nguyễn Văn A' },
   { key: 'birthDate', label: 'Ngày sinh', type: 'date', default: '1990-01-01' },
-  { key: 'bloodGroup', label: 'Nhóm máu', default: 'O+' },
+  { key: 'bloodGroup', label: 'Nhóm máu', optionsFrom: '/blood-groups', default: 'O+' },
   { key: 'medicalRecord', label: 'Bệnh án', placeholder: 'Tóm tắt bệnh án' },
-  { key: 'hospitalId', label: 'Mã bệnh viện', default: 'BV001' },
+  { key: 'hospitalId', label: 'Bệnh viện', optionsFrom: '/hospitals' },
 ]
 
 const columns = [
@@ -15,7 +15,7 @@ const columns = [
   { key: 'birthDate', label: 'Ngày sinh', type: 'date' },
   { key: 'bloodGroup', label: 'Nhóm máu' },
   { key: 'medicalRecord', label: 'Bệnh án' },
-  { key: 'hospitalId', label: 'Bệnh viện' },
+  { key: 'hospitalId', label: 'Bệnh viện', lookup: 'hospitalId' },
 ]
 </script>
 

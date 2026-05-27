@@ -1,21 +1,30 @@
-﻿<script setup>
+<script setup>
 import CrudPage from './CrudPage.vue'
 
 const fields = [
-  { key: 'bloodBagId', label: 'Gói máu đạt chuẩn', default: 'GM001' },
-  { key: 'type', label: 'Loại thành phần', default: 'Hồng cầu' },
-  { key: 'volume', label: 'Thể tích thực tế', type: 'number', default: 250 },
+  { key: 'bloodBagId', label: 'Gói máu đạt chuẩn', optionsFrom: '/blood-bags' },
+  { key: 'type', label: 'Loại thành phần', options: [
+    { id: 'Hồng cầu', name: 'Hồng cầu' },
+    { id: 'Huyết tương', name: 'Huyết tương' },
+    { id: 'Tiểu cầu', name: 'Tiểu cầu' },
+  ], default: 'Hồng cầu' },
+  { key: 'volume', label: 'Thể tích thực tế (ml)', type: 'number', default: 250 },
   { key: 'expiresAt', label: 'Hạn sử dụng', type: 'date' },
-  { key: 'storageId', label: 'Vị trí kho', default: 'VT001' },
-  { key: 'status', label: 'Trạng thái', default: 'Sẵn sàng' },
+  { key: 'storageId', label: 'Vị trí kho', optionsFrom: '/storages' },
+  { key: 'status', label: 'Trạng thái', options: [
+    { id: 'Sẵn sàng', name: 'Sẵn sàng' },
+    { id: 'Đã xuất', name: 'Đã xuất' },
+    { id: 'Hết hạn', name: 'Hết hạn' },
+  ], default: 'Sẵn sàng' },
 ]
 
 const columns = [
-  { key: 'id', label: 'Túi máu' },
+  { key: 'id', label: 'Mã' },
   { key: 'type', label: 'Loại' },
-  { key: 'volume', label: 'Thể tích' },
+  { key: 'volume', label: 'Thể tích (ml)' },
   { key: 'expiresAt', label: 'Hạn dùng', type: 'date' },
-  { key: 'storageId', label: 'Vị trí' },
+  { key: 'bloodBagId', label: 'Gói máu', lookup: 'bloodBagId' },
+  { key: 'storageId', label: 'Vị trí', lookup: 'storageId' },
   { key: 'status', label: 'Trạng thái' },
 ]
 </script>
@@ -28,6 +37,6 @@ const columns = [
     endpoint="/components"
     :fields="fields"
     :columns="columns"
-    empty-text="Chưa có túi máu trong kho."
+    empty-text="Chưa có thành phần máu trong kho."
   />
 </template>
