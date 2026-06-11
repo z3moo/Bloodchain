@@ -35,6 +35,7 @@ onMounted(loadDashboard)
       <div class="hero-actions">
         <button class="btn primary" type="button" @click="emit('open-module', 'requests')">T&#7841;o phi&#7871;u nhanh</button>
         <button class="btn ghost" type="button" @click="emit('open-module', 'reports')">Xem b&#225;o c&#225;o</button>
+        <button class="btn ghost" type="button" @click="loadDashboard">T&#7843;i l&#7841;i</button>
       </div>
     </div>
 
@@ -51,7 +52,7 @@ onMounted(loadDashboard)
       </article>
       <article class="card">
         <p class="card-title">Phi&#7871;u ch&#7901; duy&#7879;t</p>
-        <p class="metric">{{ requests.filter((item) => String(item.status || '').includes('Chờ')).length }}</p>
+        <p class="metric">{{ requests.filter((item) => String(item.status || '').trim() === 'Chờ duyệt').length }}</p>
         <p class="metric-note">Y&#234;u c&#7847;u &#273;ang ch&#7901; x&#7917; l&#253;</p>
       </article>
       <article class="card">

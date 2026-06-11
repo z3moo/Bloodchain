@@ -6,7 +6,6 @@ const fields = [
   { key: 'location', label: 'Địa điểm', placeholder: 'Hà Nội' },
   { key: 'time', label: 'Thời gian', type: 'datetime-local' },
   { key: 'expected', label: 'Số lượng dự kiến', type: 'number', default: 100 },
-  { key: 'actual', label: 'Số lượng thực tế', type: 'number', default: 0 },
 ]
 
 const columns = [

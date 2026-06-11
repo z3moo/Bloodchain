@@ -1,13 +1,33 @@
 <script setup>
 defineProps({
   accounts: { type: Array, required: true },
+  pendingAccounts: { type: Array, default: () => [] },
   currentUsername: { type: String, required: true },
   resettingDatabase: { type: Boolean, default: false },
   databaseResetMessage: { type: String, default: '' },
   databaseResetError: { type: String, default: '' },
 })
 
-const emit = defineEmits(['promote-staff', 'revoke-staff', 'delete-account', 'reset-database'])
+const emit = defineEmits(['promote-staff', 'revoke-staff', 'delete-account', 'approve-account', 'reject-account', 'reset-database'])
+
+const roleRequestLabels = {
+  HOSPITAL: 'Bệnh viện',
+  STAFF: 'Nhân viên trung tâm',
+  DONOR: 'Người hiến',
+}
+function requestRoleLabel(role) {
+  return roleRequestLabels[String(role || '').toUpperCase()] || role || '--'
+}
+function approveAccount(account) {
+  if (window.confirm(`Duyệt tài khoản "${account.username}"? Hệ thống sẽ tạo hồ sơ đơn vị tương ứng.`)) {
+    emit('approve-account', account.username)
+  }
+}
+function rejectAccount(account) {
+  if (window.confirm(`Từ chối và xóa yêu cầu của "${account.username}"?`)) {
+    emit('reject-account', account.username)
+  }
+}
 
 const labels = {
   admin: 'Quản trị',
@@ -38,7 +58,7 @@ function remove(account) {
   emit('delete-account', account.username)
 }
 function resetDatabase() {
-  const confirmed = window.confirm('Khôi phục dữ liệu vận hành về mẫu? Tài khoản và quyền hiện có sẽ được giữ nguyên.')
+  const confirmed = window.confirm('Khôi phục toàn bộ dữ liệu về mẫu? TẤT CẢ tài khoản (kể cả người hiến đã đăng ký và staff đã cấp quyền) sẽ bị xóa và đặt lại về 4 tài khoản mẫu. Hành động này không thể hoàn tác.')
   if (confirmed) emit('reset-database')
 }
 </script>
@@ -52,6 +72,44 @@ function resetDatabase() {
         <p>Theo d&#245;i ng&#432;&#7901;i &#273;ang s&#7917; d&#7909;ng h&#7879; th&#7889;ng v&#224; chuy&#7875;n t&#224;i kho&#7843;n ph&#249; h&#7907;p th&#224;nh Staff.</p>
       </div>
     </div>
+
+    <section v-if="pendingAccounts.length" class="table-card">
+      <div class="section-title">
+        <div>
+          <h3>T&#224;i kho&#7843;n ch&#7901; duy&#7879;t</h3>
+          <p>Y&#234;u c&#7847;u t&#7841;o t&#224;i kho&#7843;n b&#7879;nh vi&#7879;n / nh&#226;n vi&#234;n. Duy&#7879;t s&#7869; t&#7841;o h&#7891; s&#417; &#273;&#417;n v&#7883; v&#224; k&#237;ch ho&#7841;t &#273;&#259;ng nh&#7853;p.</p>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>T&#234;n &#273;&#259;ng nh&#7853;p</th>
+              <th>Lo&#7841;i</th>
+              <th>T&#234;n &#273;&#417;n v&#7883; / h&#7885; t&#234;n</th>
+              <th>&#272;&#7883;a ch&#7881; / ch&#7913;c v&#7909;</th>
+              <th>S&#272;T</th>
+              <th>Thao t&#225;c</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="account in pendingAccounts" :key="account.username">
+              <td><strong>{{ account.username }}</strong></td>
+              <td>{{ requestRoleLabel(account.requestedRole) }}</td>
+              <td>{{ account.orgName || account.displayName }}</td>
+              <td>{{ account.address || account.position || '--' }}</td>
+              <td>{{ account.phone || '--' }}</td>
+              <td>
+                <div class="action-row">
+                  <button class="btn primary compact" type="button" @click="approveAccount(account)">Duy&#7879;t</button>
+                  <button class="btn danger compact" type="button" @click="rejectAccount(account)">T&#7915; ch&#7889;i</button>
+                </div>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
 
     <section class="table-card">
       <div class="section-title">
@@ -96,7 +154,7 @@ function resetDatabase() {
       <div class="section-title">
         <div>
           <h3>Khôi phục dữ liệu mẫu</h3>
-          <p>Chỉ quản trị dùng khi muốn xóa dữ liệu nghiệp vụ và khôi phục lại dữ liệu mẫu. Tài khoản và quyền được giữ nguyên.</p>
+          <p>Chỉ quản trị dùng khi muốn xóa toàn bộ dữ liệu và khôi phục lại dữ liệu mẫu. Lưu ý: tất cả tài khoản hiện có sẽ bị xóa và đặt lại về 4 tài khoản mẫu.</p>
         </div>
       </div>
       <p v-if="databaseResetError" class="login-error">{{ databaseResetError }}</p>

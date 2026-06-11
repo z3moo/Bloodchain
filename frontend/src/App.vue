@@ -1,6 +1,7 @@
 <script setup>
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import Dashboard from './views/Dashboard.vue'
+import HospitalDashboard from './views/HospitalDashboard.vue'
 import Donors from './views/Donors.vue'
 import Campaigns from './views/Campaigns.vue'
 import BloodBags from './views/BloodBags.vue'
@@ -12,35 +13,74 @@ import Requests from './views/Requests.vue'
 import Exports from './views/Exports.vue'
 import Reports from './views/Reports.vue'
 import Accounts from './views/Accounts.vue'
+import MyProfile from './views/MyProfile.vue'
+import MyDonations from './views/MyDonations.vue'
+import DonorCampaigns from './views/DonorCampaigns.vue'
+import MyPoints from './views/MyPoints.vue'
+import DonorData from './views/DonorData.vue'
 import { api } from './api'
 
 const SESSION_STORAGE_KEY = 'bloodchain.currentUser'
 
+// Order matters: firstAllowedModule(role) returns the first match, which
+// becomes the post-login landing page. Hospital lands on hospital-dashboard,
+// donor lands on my-profile, admin/staff land on dashboard.
 const modules = [
-  { key: 'dashboard', label: 'T\u1ed5ng quan', component: Dashboard, group: '\u0110i\u1ec1u h\u00e0nh', access: ['admin', 'staff'] },
-  { key: 'donors', label: '\u0110\u0103ng k\u00fd hi\u1ebfn m\u00e1u', component: Donors, group: 'Ng\u01b0\u1eddi hi\u1ebfn', access: ['admin', 'donor', 'staff'] },
-  { key: 'campaigns', label: 'Chi\u1ebfn d\u1ecbch', component: Campaigns, group: 'Ti\u1ebfp nh\u1eadn', access: ['admin', 'staff'] },
-  { key: 'blood-bags', label: 'G\u00f3i m\u00e1u', component: BloodBags, group: 'Ti\u1ebfp nh\u1eadn', access: ['admin', 'staff'] },
-  { key: 'lab-tests', label: 'X\u00e9t nghi\u1ec7m', component: LabTests, group: 'Y khoa', access: ['admin', 'staff'] },
-  { key: 'components', label: 'Kho m\u00e1u', component: Components, group: 'Kho', access: ['admin', 'staff'] },
-  { key: 'hospitals', label: 'B\u1ec7nh vi\u1ec7n', component: Hospitals, group: 'Cung \u1ee9ng', access: ['admin', 'staff'] },
-  { key: 'patients', label: 'B\u1ec7nh nh\u00e2n', component: Patients, group: 'Cung \u1ee9ng', access: ['admin', 'hospital', 'staff'] },
-  { key: 'requests', label: 'Phi\u1ebfu y\u00eau c\u1ea7u', component: Requests, group: 'Cung \u1ee9ng', access: ['admin', 'hospital', 'staff'] },
-  { key: 'exports', label: 'Xu\u1ea5t kho FIFO', component: Exports, group: 'Cung \u1ee9ng', access: ['admin', 'staff'] },
-  { key: 'reports', label: 'B\u00e1o c\u00e1o', component: Reports, group: 'T\u1ed5ng h\u1ee3p', access: ['admin'] },
-  { key: 'accounts', label: 'T\u00e0i kho\u1ea3n', component: Accounts, group: 'T\u1ed5ng h\u1ee3p', access: ['admin'] },
+  { key: 'dashboard', label: 'Tổng quan', component: Dashboard, group: 'Điều hành', access: ['admin', 'staff'] },
+  { key: 'hospital-dashboard', label: 'Tổng quan bệnh viện', component: HospitalDashboard, group: 'Điều hành', access: ['hospital'] },
+  { key: 'my-profile', label: 'Hồ sơ của tôi', component: MyProfile, group: 'Người hiến', access: ['donor'] },
+  { key: 'my-donations', label: 'Lịch sử hiến máu', component: MyDonations, group: 'Người hiến', access: ['donor'] },
+  { key: 'donor-campaigns', label: 'Chiến dịch sắp tới', component: DonorCampaigns, group: 'Người hiến', access: ['donor'] },
+  { key: 'my-points', label: 'Điểm thưởng', component: MyPoints, group: 'Người hiến', access: ['donor'] },
+  { key: 'donors', label: 'Người hiến máu', component: Donors, group: 'Người hiến', access: ['admin', 'staff'] },
+  { key: 'donor-data', label: 'Dữ liệu người hiến', component: DonorData, group: 'Người hiến', access: ['admin', 'staff'] },
+  { key: 'campaigns', label: 'Chiến dịch', component: Campaigns, group: 'Tiếp nhận', access: ['admin', 'staff'] },
+  { key: 'blood-bags', label: 'Gói máu', component: BloodBags, group: 'Tiếp nhận', access: ['admin', 'staff'] },
+  { key: 'lab-tests', label: 'Xét nghiệm', component: LabTests, group: 'Y khoa', access: ['admin', 'staff'] },
+  { key: 'components', label: 'Kho máu', component: Components, group: 'Kho', access: ['admin', 'staff'] },
+  { key: 'hospitals', label: 'Bệnh viện', component: Hospitals, group: 'Cung ứng', access: ['admin', 'staff'] },
+  { key: 'patients', label: 'Bệnh nhân', component: Patients, group: 'Cung ứng', access: ['admin', 'hospital', 'staff'] },
+  { key: 'requests', label: 'Phiếu yêu cầu', component: Requests, group: 'Cung ứng', access: ['admin', 'hospital', 'staff'] },
+  { key: 'exports', label: 'Xuất kho FIFO', component: Exports, group: 'Cung ứng', access: ['admin', 'staff'] },
+  { key: 'reports', label: 'Báo cáo', component: Reports, group: 'Tổng hợp', access: ['admin', 'staff'] },
+  { key: 'accounts', label: 'Tài khoản', component: Accounts, group: 'Tổng hợp', access: ['admin'] },
 ]
 
 const accounts = ref([])
+const pendingAccounts = ref([])
 const resettingDatabase = ref(false)
 const databaseResetMessage = ref('')
 const databaseResetError = ref('')
 
 const loginForm = ref({ username: '', password: '' })
 const loginError = ref('')
-const registerForm = ref({ displayName: '', username: '', password: '', confirmPassword: '' })
+const registerForm = ref({
+  displayName: '',
+  username: '',
+  password: '',
+  confirmPassword: '',
+  birthDate: '',
+  gender: 'Khác',
+  phone: '',
+  bloodGroup: 'O+',
+})
+const bloodGroups = ref([])
 const registerError = ref('')
 const registerSuccess = ref('')
+const orgForm = ref({
+  displayName: '',
+  username: '',
+  password: '',
+  confirmPassword: '',
+  role: 'hospital',
+  orgName: '',
+  address: '',
+  phone: '',
+  position: '',
+  email: '',
+})
+const orgError = ref('')
+const orgSuccess = ref('')
 const authMode = ref('login')
 const currentUser = ref(readStoredUser())
 const activeKey = ref(routeKeyFromLocation() || 'dashboard')
@@ -121,20 +161,81 @@ function login() {
       activeKey.value = next.key
       setRoute(next.key, true)
       loginError.value = ''
-      return loadAccounts()
+      // Only admin reaches the Accounts page; load that data on demand instead
+      // of unauthenticated on app boot. Other roles don't need the list.
+      if (account.role === 'admin') return Promise.all([loadAccounts(), loadPending()])
+      return null
     })
     .catch((error) => {
       loginError.value = error.message
     })
 }
+function loadBloodGroups() {
+  return api.list('/blood-groups')
+    .then((items) => {
+      bloodGroups.value = items
+      if (items.length && !registerForm.value.bloodGroup) {
+        registerForm.value.bloodGroup = items[0].id
+      }
+    })
+    .catch(() => {
+      bloodGroups.value = []
+    })
+}
 function openRegister() {
   authMode.value = 'register'
   loginError.value = ''
+  if (!bloodGroups.value.length) loadBloodGroups()
 }
 function openLogin() {
   authMode.value = 'login'
   registerError.value = ''
   registerSuccess.value = ''
+  orgError.value = ''
+  orgSuccess.value = ''
+}
+function openRegisterOrg() {
+  authMode.value = 'register-org'
+  loginError.value = ''
+  orgError.value = ''
+  orgSuccess.value = ''
+}
+function registerOrg() {
+  const { displayName, username, password, confirmPassword, role } = orgForm.value
+  orgError.value = ''
+  orgSuccess.value = ''
+
+  if (!displayName.trim() || !username.trim() || !password) {
+    orgError.value = 'Vui lòng nhập đầy đủ họ tên / tên đơn vị, tên đăng nhập và mật khẩu.'
+    return
+  }
+  if (password !== confirmPassword) {
+    orgError.value = 'Mật khẩu xác nhận không khớp.'
+    return
+  }
+
+  return api.registerStaff({
+    username: username.trim(),
+    password,
+    displayName: displayName.trim(),
+    email: orgForm.value.email,
+    role,
+    orgName: orgForm.value.orgName || displayName.trim(),
+    address: orgForm.value.address,
+    phone: orgForm.value.phone,
+    position: orgForm.value.position,
+  })
+    .then((result) => {
+      orgForm.value = {
+        displayName: '', username: '', password: '', confirmPassword: '',
+        role: 'hospital', orgName: '', address: '', phone: '', position: '', email: '',
+      }
+      orgSuccess.value = result?.message || 'Đã gửi yêu cầu. Vui lòng chờ quản trị duyệt tài khoản.'
+      authMode.value = 'login'
+    })
+    .catch((error) => {
+      orgError.value = error.message
+    })
 }
 function registerDonor() {
   const { displayName, username, password, confirmPassword } = registerForm.value
@@ -142,28 +243,38 @@ function registerDonor() {
   registerSuccess.value = ''
 
   if (!displayName.trim() || !username.trim() || !password) {
-    registerError.value = 'Vui l\u00f2ng nh\u1eadp \u0111\u1ea7y \u0111\u1ee7 h\u1ecd t\u00ean, t\u00ean \u0111\u0103ng nh\u1eadp v\u00e0 m\u1eadt kh\u1ea9u.'
+    registerError.value = 'Vui lòng nhập đầy đủ họ tên, tên đăng nhập và mật khẩu.'
     return
   }
   if (password !== confirmPassword) {
-    registerError.value = 'M\u1eadt kh\u1ea9u x\u00e1c nh\u1eadn kh\u00f4ng kh\u1edbp.'
-    return
-  }
-  if (accounts.value.some((item) => item.username.toLowerCase() === username.trim().toLowerCase())) {
-    registerError.value = 'T\u00ean \u0111\u0103ng nh\u1eadp \u0111\u00e3 t\u1ed3n t\u1ea1i.'
+    registerError.value = 'Mật khẩu xác nhận không khớp.'
     return
   }
 
+  // Backend already returns 409 on duplicate username; trust that instead of
+  // pre-fetching the entire account list before login (information disclosure).
   return api.create('/auth/register', {
     username: username.trim(),
     password,
     displayName: displayName.trim(),
+    birthDate: registerForm.value.birthDate || null,
+    gender: registerForm.value.gender,
+    phone: registerForm.value.phone,
+    bloodGroup: registerForm.value.bloodGroup,
   })
     .then(() => {
-      registerForm.value = { displayName: '', username: '', password: '', confirmPassword: '' }
-      registerSuccess.value = '\u0110\u0103ng k\u00fd t\u00e0i kho\u1ea3n ng\u01b0\u1eddi hi\u1ebfn th\u00e0nh c\u00f4ng. B\u1ea1n c\u00f3 th\u1ec3 \u0111\u0103ng nh\u1eadp ngay.'
+      registerForm.value = {
+        displayName: '',
+        username: '',
+        password: '',
+        confirmPassword: '',
+        birthDate: '',
+        gender: 'Khác',
+        phone: '',
+        bloodGroup: bloodGroups.value[0]?.id || 'O+',
+      }
+      registerSuccess.value = 'Đăng ký tài khoản người hiến thành công. Bạn có thể đăng nhập ngay.'
       authMode.value = 'login'
-      return loadAccounts()
     })
     .catch((error) => {
       registerError.value = error.message
@@ -180,6 +291,19 @@ function loadAccounts() {
     .catch(() => {
       accounts.value = []
     })
+}
+function loadPending() {
+  return api.accounts.pending()
+    .then((items) => { pendingAccounts.value = items })
+    .catch(() => { pendingAccounts.value = [] })
+}
+function approveAccount(username) {
+  return api.accounts.approve(username)
+    .then(() => Promise.all([loadAccounts(), loadPending()]))
+}
+function rejectAccount(username) {
+  return api.accounts.reject(username)
+    .then(() => loadPending())
 }
 function promoteToStaff(username) {
   return api.patch('/accounts', `${username}/promote`, {})
@@ -201,7 +325,7 @@ function resetDatabase() {
   databaseResetError.value = ''
   return api.create('/admin/reset-database', {})
     .then((result) => {
-      databaseResetMessage.value = result.message || '\u0110\u00e3 reset d\u1eef li\u1ec7u v\u1eadn h\u00e0nh. T\u00e0i kho\u1ea3n v\u00e0 quy\u1ec1n \u0111\u01b0\u1ee3c gi\u1eef nguy\u00ean.'
+      databaseResetMessage.value = result.message || 'Đã khôi phục dữ liệu mẫu. Tài khoản đã được đặt lại về 4 tài khoản mẫu.'
       return loadAccounts()
     })
     .catch((error) => {
@@ -213,6 +337,8 @@ function resetDatabase() {
 }
 function logout() {
   currentUser.value = null
+  accounts.value = []
+  pendingAccounts.value = []
   forgetUser()
   loginForm.value = { username: '', password: '' }
   activeKey.value = 'dashboard'
@@ -225,7 +351,13 @@ function handlePopState() {
 onMounted(() => {
   window.addEventListener('popstate', handlePopState)
   syncRouteToAccess(true)
-  loadAccounts()
+  // Defer account fetch to logged-in admins (see login()) so anonymous visitors
+  // don't see the full username/role list. authMode='register' loads blood
+  // groups on demand.
+  if (currentUser.value?.role === 'admin') {
+    loadAccounts()
+    loadPending()
+  }
 })
 onUnmounted(() => {
   window.removeEventListener('popstate', handlePopState)
@@ -252,28 +384,70 @@ onUnmounted(() => {
         <h2>Qu&#7843;n l&#253; kho m&#225;u trung t&#226;m</h2>
         <p>Vui l&#242;ng &#273;&#259;ng nh&#7853;p &#273;&#7875; ti&#7871;p t&#7909;c qu&#7843;n l&#253; th&#244;ng tin hi&#7871;n m&#225;u v&#224; kho m&#225;u.</p>
       </div>
-      <div v-else class="login-copy register-copy">
+      <div v-else-if="authMode === 'register'" class="login-copy register-copy">
         <p class="eyebrow">T&#7841;o t&#224;i kho&#7843;n</p>
         <h2>&#272;&#259;ng k&#253; ng&#432;&#7901;i hi&#7871;n m&#225;u</h2>
         <p>T&#7841;o t&#224;i kho&#7843;n &#273;&#7875; ng&#432;&#7901;i hi&#7871;n c&#243; th&#7875; tham gia &#273;&#259;ng k&#253; hi&#7871;n m&#225;u v&#224; theo d&#245;i th&#244;ng tin c&#225; nh&#226;n.</p>
+      </div>
+      <div v-else class="login-copy register-copy">
+        <p class="eyebrow">T&#7841;o t&#224;i kho&#7843;n</p>
+        <h2>&#272;&#259;ng k&#253; b&#7879;nh vi&#7879;n / nh&#226;n vi&#234;n</h2>
+        <p>G&#7917;i y&#234;u c&#7847;u t&#7841;o t&#224;i kho&#7843;n b&#7879;nh vi&#7879;n ho&#7863;c nh&#226;n vi&#234;n trung t&#226;m. Qu&#7843;n tr&#7883; vi&#234;n s&#7869; duy&#7879;t tr&#432;&#7899;c khi b&#7841;n &#273;&#259;ng nh&#7853;p &#273;&#432;&#7907;c.</p>
       </div>
 
       <form v-if="authMode === 'login'" class="login-form" @submit.prevent="login">
         <label class="auth-username-label">T&#234;n &#273;&#259;ng nh&#7853;p<input v-model="loginForm.username" autocomplete="username" /></label>
         <label class="auth-password-label">M&#7853;t kh&#7849;u<input v-model="loginForm.password" type="password" autocomplete="current-password" /></label>
         <p v-if="loginError" class="login-error">{{ loginError }}</p>
+        <p v-if="orgSuccess" class="login-success">{{ orgSuccess }}</p>
         <button class="btn primary" type="submit">&#272;&#259;ng nh&#7853;p</button>
         <button class="btn ghost register-link-button" type="button" @click="openRegister">&#272;&#259;ng k&#253; t&#224;i kho&#7843;n ng&#432;&#7901;i hi&#7871;n</button>
+        <button class="btn ghost register-link-button" type="button" @click="openRegisterOrg">&#272;&#259;ng k&#253; b&#7879;nh vi&#7879;n / nh&#226;n vi&#234;n</button>
       </form>
 
-      <form v-else class="login-form register-form" @submit.prevent="registerDonor">
+      <form v-else-if="authMode === 'register'" class="login-form register-form" @submit.prevent="registerDonor">
         <label>H&#7885; v&#224; t&#234;n<input v-model="registerForm.displayName" autocomplete="name" /></label>
         <label class="auth-username-label">T&#234;n &#273;&#259;ng nh&#7853;p<input v-model="registerForm.username" autocomplete="username" /></label>
         <label class="auth-password-label">M&#7853;t kh&#7849;u<input v-model="registerForm.password" type="password" autocomplete="new-password" /></label>
         <label>X&#225;c nh&#7853;n m&#7853;t kh&#7849;u<input v-model="registerForm.confirmPassword" type="password" autocomplete="new-password" /></label>
+        <label>Ng&#224;y sinh<input v-model="registerForm.birthDate" type="date" /></label>
+        <label>Gi&#7899;i t&#237;nh
+          <select v-model="registerForm.gender">
+            <option value="Nam">Nam</option>
+            <option value="Nữ">Nữ</option>
+            <option value="Khác">Khác</option>
+          </select>
+        </label>
+        <label>S&#7889; &#273;i&#7879;n tho&#7841;i<input v-model="registerForm.phone" type="text" autocomplete="tel" placeholder="0912345678" /></label>
+        <label>Nh&#243;m m&#225;u
+          <select v-model="registerForm.bloodGroup">
+            <option v-for="g in bloodGroups" :key="g.id" :value="g.id">{{ g.name }}</option>
+          </select>
+        </label>
         <p v-if="registerError" class="login-error">{{ registerError }}</p>
         <p v-if="registerSuccess" class="login-success">{{ registerSuccess }}</p>
         <button class="btn secondary" type="submit">T&#7841;o t&#224;i kho&#7843;n</button>
+        <button class="btn ghost" type="button" @click="openLogin">Quay l&#7841;i &#273;&#259;ng nh&#7853;p</button>
+      </form>
+
+      <form v-else class="login-form register-form" @submit.prevent="registerOrg">
+        <label>Lo&#7841;i t&#224;i kho&#7843;n
+          <select v-model="orgForm.role">
+            <option value="hospital">B&#7879;nh vi&#7879;n</option>
+            <option value="staff">Nh&#226;n vi&#234;n trung t&#226;m</option>
+          </select>
+        </label>
+        <label>{{ orgForm.role === 'hospital' ? 'Tên bệnh viện' : 'Họ và tên' }}<input v-model="orgForm.displayName" autocomplete="organization" /></label>
+        <label class="auth-username-label">T&#234;n &#273;&#259;ng nh&#7853;p<input v-model="orgForm.username" autocomplete="username" /></label>
+        <label class="auth-password-label">M&#7853;t kh&#7849;u<input v-model="orgForm.password" type="password" autocomplete="new-password" /></label>
+        <label>X&#225;c nh&#7853;n m&#7853;t kh&#7849;u<input v-model="orgForm.confirmPassword" type="password" autocomplete="new-password" /></label>
+        <label v-if="orgForm.role === 'hospital'">&#272;&#7883;a ch&#7881;<input v-model="orgForm.address" type="text" placeholder="78 Gi&#7843;i Ph&#243;ng, H&#224; N&#7897;i" /></label>
+        <label v-else>Ch&#7913;c v&#7909;<input v-model="orgForm.position" type="text" placeholder="K&#7929; thu&#7853;t vi&#234;n x&#233;t nghi&#7879;m" /></label>
+        <label>S&#7889; &#273;i&#7879;n tho&#7841;i<input v-model="orgForm.phone" type="text" autocomplete="tel" placeholder="0912345678" /></label>
+        <label>Email<input v-model="orgForm.email" type="email" autocomplete="email" /></label>
+        <p v-if="orgError" class="login-error">{{ orgError }}</p>
+        <p v-if="orgSuccess" class="login-success">{{ orgSuccess }}</p>
+        <button class="btn secondary" type="submit">G&#7917;i y&#234;u c&#7847;u duy&#7879;t</button>
         <button class="btn ghost" type="button" @click="openLogin">Quay l&#7841;i &#273;&#259;ng nh&#7853;p</button>
       </form>
 
@@ -312,7 +486,7 @@ onUnmounted(() => {
           <button class="btn ghost" type="button" @click="logout">&#272;&#259;ng xu&#7845;t</button>
         </div>
       </header>
-      <main id="main-content" class="main-content" tabindex="-1"><Accounts v-if="activeModule.key === 'accounts'" :accounts="accounts" :current-username="currentUser.username" :resetting-database="resettingDatabase" :database-reset-message="databaseResetMessage" :database-reset-error="databaseResetError" @promote-staff="promoteToStaff" @revoke-staff="revokeStaff" @delete-account="deleteAccount" @reset-database="resetDatabase" /><component v-else :is="activeModule.component" @open-module="openModule" /></main>
+      <main id="main-content" class="main-content" tabindex="-1"><Accounts v-if="activeModule.key === 'accounts'" :accounts="accounts" :pending-accounts="pendingAccounts" :current-username="currentUser.username" :resetting-database="resettingDatabase" :database-reset-message="databaseResetMessage" :database-reset-error="databaseResetError" @promote-staff="promoteToStaff" @revoke-staff="revokeStaff" @delete-account="deleteAccount" @approve-account="approveAccount" @reject-account="rejectAccount" @reset-database="resetDatabase" /><component v-else :is="activeModule.component" @open-module="openModule" /></main>
     </div>
   </div>
 </template>

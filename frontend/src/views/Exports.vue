@@ -2,8 +2,8 @@
 import CrudPage from './CrudPage.vue'
 
 const fields = [
-  { key: 'requestId', label: 'Phiếu yêu cầu', optionsFrom: '/requests' },
-  { key: 'componentId', label: 'Thành phần xuất', optionsFrom: '/components' },
+  { key: 'requestId', label: 'Phiếu yêu cầu', optionsFrom: '/requests', labelFn: (r) => `${r.id} · ${r.componentType || '?'} · ${r.volume || 0}ml` },
+  { key: 'componentId', label: 'Thành phần xuất', optionsFrom: '/components', labelFn: (c) => `${c.id} · ${c.type || '?'}` },
   { key: 'totalVolume', label: 'Tổng thể tích (ml)', type: 'number', default: 250 },
   { key: 'crossMatch', label: 'Phản ứng chéo', options: [
     { id: 'Hòa hợp', name: 'Hòa hợp' },

@@ -1,6 +1,7 @@
 import { readFile } from 'node:fs/promises'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import bcrypt from 'bcryptjs'
 import cors from 'cors'
 import dotenv from 'dotenv'
 import express from 'express'
@@ -70,6 +71,36 @@ async function updateRow(pool, table, idColumn, idValue, updates) {
 app.use(cors())
 app.use(express.json())
 
+// Sprint 1 identity bridge: trust-on-faith headers from the SPA's localStorage.
+// Real JWT/session comes in Sprint 3. Until then this is enough for the UI to
+// scope requests; curl-with-spoofed-headers can still bypass and that's known.
+app.use((req, _res, next) => {
+  const username = req.get('X-User')
+  const role = String(req.get('X-Role') || '').toLowerCase()
+  if (!username || !role) {
+    req.user = null
+  } else {
+    req.user = {
+      username,
+      role,
+      donorId: req.get('X-Donor-Id') || null,
+      hospitalId: req.get('X-Hospital-Id') || null,
+      staffId: req.get('X-Staff-Id') || null,
+    }
+  }
+  next()
+})
+
+function requireRole(...roles) {
+  return (req, res, next) => {
+    if (!req.user) return res.status(401).json({ message: 'Vui lòng đăng nhập.' })
+    if (!roles.includes(req.user.role)) {
+      return res.status(403).json({ message: 'Bạn không có quyền thực hiện thao tác này.' })
+    }
+    return next()
+  }
+}
+
 function asInt(value, fallback = 0) {
   const parsed = Number.parseInt(value, 10)
   return Number.isFinite(parsed) ? parsed : fallback
@@ -105,6 +136,9 @@ async function resetDatabase() {
   const pool = await getPool()
   await runSqlText(pool, `
     IF OBJECT_ID('dbo.vw_TaiKhoan', 'V') IS NOT NULL DROP VIEW dbo.vw_TaiKhoan;
+    IF OBJECT_ID('dbo.sp_TuChoiTaiKhoan', 'P') IS NOT NULL DROP PROCEDURE dbo.sp_TuChoiTaiKhoan;
+    IF OBJECT_ID('dbo.sp_DuyetTaiKhoan', 'P') IS NOT NULL DROP PROCEDURE dbo.sp_DuyetTaiKhoan;
+    IF OBJECT_ID('dbo.sp_DangKyTaiKhoanChoDuyet', 'P') IS NOT NULL DROP PROCEDURE dbo.sp_DangKyTaiKhoanChoDuyet;
     IF OBJECT_ID('dbo.sp_XoaTaiKhoan', 'P') IS NOT NULL DROP PROCEDURE dbo.sp_XoaTaiKhoan;
     IF OBJECT_ID('dbo.sp_ThuHoiStaff', 'P') IS NOT NULL DROP PROCEDURE dbo.sp_ThuHoiStaff;
     IF OBJECT_ID('dbo.sp_ChuyenThanhStaff', 'P') IS NOT NULL DROP PROCEDURE dbo.sp_ChuyenThanhStaff;
@@ -117,8 +151,12 @@ async function resetDatabase() {
   await runSqlFile(pool, '02_auth_permissions.sql')
 }
 async function nextId(pool, table, column, prefix, width = 3) {
+  // SUBSTRING reads the whole numeric tail (up to 18 chars — column is VARCHAR(20)
+  // minus a short prefix), not just `width`, so codes don't collide once they
+  // pass 999. padStart(width) keeps them zero-padded and tidy up to 999, then
+  // they naturally grow to NH1000, NH1001, ...
   const result = await pool.request().query(
-    `SELECT ISNULL(MAX(CAST(SUBSTRING(${column}, ${prefix.length + 1}, ${width}) AS INT)), 0) AS maxId FROM ${table} WHERE ${column} LIKE '${prefix}%'`,
+    `SELECT ISNULL(MAX(CAST(SUBSTRING(${column}, ${prefix.length + 1}, 18) AS INT)), 0) AS maxId FROM ${table} WHERE ${column} LIKE '${prefix}%'`,
   )
   return `${prefix}${String(Number(result.recordset[0].maxId) + 1).padStart(width, '0')}`
 }
@@ -145,7 +183,7 @@ app.get('/api/health', async (_req, res) => {
   catch (error) { console.error('[bloodchain]', error); res.status(500).json({ ok: false, message: T.serverError }) }
 })
 
-app.post('/api/admin/reset-database', async (_req, res) => {
+app.post('/api/admin/reset-database', requireRole('admin'), async (_req, res) => {
   try {
     await resetDatabase()
     res.json({ ok: true, message: 'Đã khôi phục dữ liệu mẫu.' })
@@ -155,6 +193,17 @@ app.post('/api/admin/reset-database', async (_req, res) => {
   }
 })
 
+// Cost factor 10 = ~10ms per hash on a modern laptop. Plenty for the lab demo
+// without making the login spinner feel laggy.
+const BCRYPT_ROUNDS = 10
+
+// Detect a stored value that looks like a bcrypt hash. Defensive guard so a
+// fresh DB-reset doesn't lock everyone out if a row was somehow seeded with
+// plaintext.
+function isBcryptHash(value) {
+  return typeof value === 'string' && /^\$2[aby]\$/.test(value)
+}
+
 app.post('/api/auth/login', async (req, res) => {
   const { username, password } = req.body || {}
   if (!username || !password) return res.status(400).json({ message: T.missingLogin })
@@ -162,16 +211,20 @@ app.post('/api/auth/login', async (req, res) => {
     const pool = await getPool()
     const result = await pool.request()
       .input('TenDangNhap', sql.VarChar(50), username)
-      .input('MatKhau', sql.VarChar(50), password)
       .execute('sp_DangNhap')
     const user = result.recordset[0]
     if (!user) return res.status(401).json({ message: T.badLogin })
+    const stored = user.MatKhau || ''
+    const ok = isBcryptHash(stored)
+      ? await bcrypt.compare(password, stored)
+      : stored === password // legacy plaintext fallback for un-migrated rows
+    if (!ok) return res.status(401).json({ message: T.badLogin })
     res.json(mapAccount(user))
   } catch (error) { safeError(res, error) }
 })
 
 app.post('/api/auth/register', async (req, res) => {
-  const { username, password, displayName, email } = req.body || {}
+  const { username, password, displayName, email, birthDate, gender, phone, bloodGroup } = req.body || {}
   if (!username || !password || !displayName) return res.status(400).json({ message: T.missingRegister })
   try {
     const pool = await getPool()
@@ -180,33 +233,138 @@ app.post('/api/auth/register', async (req, res) => {
       .query('SELECT 1 AS hit FROM TAI_KHOAN WHERE TenDangNhap = @TenDangNhap')
     if (existing.recordset.length) return res.status(409).json({ message: T.duplicateUsername })
     const accountId = await nextId(pool, 'TAI_KHOAN', 'MaTaiKhoan', 'TK')
+    const donorId = await nextId(pool, 'NGUOI_HIEN', 'MaNguoiHien', 'NH')
+    const passwordHash = await bcrypt.hash(password, BCRYPT_ROUNDS)
     await pool.request()
       .input('MaTaiKhoan', sql.VarChar(20), accountId)
+      .input('MaNguoiHien', sql.VarChar(20), donorId)
       .input('TenDangNhap', sql.VarChar(50), username)
-      .input('MatKhau', sql.VarChar(50), password)
+      .input('MatKhau', sql.VarChar(255), passwordHash)
       .input('HoTen', sql.NVarChar(120), displayName)
       .input('Email', sql.VarChar(120), email || '')
+      .input('NgaySinh', sql.Date, birthDate ? new Date(birthDate) : new Date('2000-01-01'))
+      .input('GioiTinh', sql.NVarChar(10), gender || T.other)
+      .input('SDT', sql.VarChar(15), phone || '')
+      .input('MaNhomMau', sql.VarChar(5), bloodGroup || 'O+')
       .execute('sp_DangKyNguoiHien')
     const result = await pool.request().input('TenDangNhap', sql.VarChar(50), username).query('SELECT * FROM TAI_KHOAN WHERE TenDangNhap = @TenDangNhap')
     res.status(201).json(mapAccount(result.recordset[0]))
   } catch (error) { safeError(res, error) }
 })
 
-app.get('/api/accounts', async (_req, res) => {
-  try { const pool = await getPool(); const result = await pool.request().query('SELECT * FROM TAI_KHOAN ORDER BY MaTaiKhoan'); res.json(result.recordset.map(mapAccount)) }
+// Public registration for hospital/staff accounts. Creates a "Chờ duyệt" row;
+// admin must approve, which is when the BENH_VIEN/NHAN_VIEN profile is created.
+app.post('/api/auth/register-staff', async (req, res) => {
+  const { username, password, displayName, email, role, orgName, address, phone, position } = req.body || {}
+  const requestedRole = String(role || '').toUpperCase()
+  if (!username || !password || !displayName) return res.status(400).json({ message: T.missingRegister })
+  if (requestedRole !== 'HOSPITAL' && requestedRole !== 'STAFF') {
+    return res.status(400).json({ message: 'Loại tài khoản không hợp lệ.' })
+  }
+  try {
+    const pool = await getPool()
+    const existing = await pool.request()
+      .input('TenDangNhap', sql.VarChar(50), username)
+      .query('SELECT 1 AS hit FROM TAI_KHOAN WHERE TenDangNhap = @TenDangNhap')
+    if (existing.recordset.length) return res.status(409).json({ message: T.duplicateUsername })
+    const accountId = await nextId(pool, 'TAI_KHOAN', 'MaTaiKhoan', 'TK')
+    const passwordHash = await bcrypt.hash(password, BCRYPT_ROUNDS)
+    await pool.request()
+      .input('MaTaiKhoan', sql.VarChar(20), accountId)
+      .input('TenDangNhap', sql.VarChar(50), username)
+      .input('MatKhau', sql.VarChar(255), passwordHash)
+      .input('HoTen', sql.NVarChar(120), displayName)
+      .input('Email', sql.VarChar(120), email || '')
+      .input('VaiTroYeuCau', sql.VarChar(20), requestedRole)
+      .input('TenDonVi', sql.NVarChar(200), orgName || displayName)
+      .input('DiaChi', sql.NVarChar(250), address || '')
+      .input('SDT', sql.VarChar(15), phone || '')
+      .input('ChucVu', sql.NVarChar(100), position || '')
+      .execute('sp_DangKyTaiKhoanChoDuyet')
+    res.status(201).json({ ok: true, message: 'Đã gửi yêu cầu. Vui lòng chờ quản trị duyệt tài khoản.' })
+  } catch (error) { safeError(res, error) }
+})
+
+app.get('/api/accounts', requireRole('admin'), async (_req, res) => {
+  try { const pool = await getPool(); const result = await pool.request().query('SELECT * FROM vw_TaiKhoan ORDER BY MaTaiKhoan'); res.json(result.recordset.map(mapAccount)) }
   catch (error) { safeError(res, error) }
 })
-app.patch('/api/accounts/:username/promote', async (req, res) => {
+app.patch('/api/accounts/:username/promote', requireRole('admin'), async (req, res) => {
   try { const pool = await getPool(); await pool.request().input('TenDangNhap', sql.VarChar(50), req.params.username).execute('sp_ChuyenThanhStaff'); const result = await pool.request().input('TenDangNhap', sql.VarChar(50), req.params.username).query('SELECT * FROM TAI_KHOAN WHERE TenDangNhap = @TenDangNhap'); res.json(mapAccount(result.recordset[0])) }
   catch (error) { safeError(res, error) }
 })
-app.patch('/api/accounts/:username/revoke', async (req, res) => {
+app.patch('/api/accounts/:username/revoke', requireRole('admin'), async (req, res) => {
   const nextRole = req.body?.role === 'hospital' ? 'HOSPITAL' : 'DONOR'
   try { const pool = await getPool(); await pool.request().input('TenDangNhap', sql.VarChar(50), req.params.username).input('VaiTroMoi', sql.VarChar(20), nextRole).execute('sp_ThuHoiStaff'); const result = await pool.request().input('TenDangNhap', sql.VarChar(50), req.params.username).query('SELECT * FROM TAI_KHOAN WHERE TenDangNhap = @TenDangNhap'); res.json(mapAccount(result.recordset[0])) }
   catch (error) { safeError(res, error) }
 })
-app.delete('/api/accounts/:username', async (req, res) => {
+app.delete('/api/accounts/:username', requireRole('admin'), async (req, res) => {
+  if (req.params.username === req.user.username) return res.status(400).json({ message: 'Không thể tự xóa tài khoản đang đăng nhập.' })
   try { const pool = await getPool(); await pool.request().input('TenDangNhap', sql.VarChar(50), req.params.username).execute('sp_XoaTaiKhoan'); res.status(204).end() }
+  catch (error) { safeError(res, error) }
+})
+
+// Pending hospital/staff registration requests awaiting admin approval.
+app.get('/api/accounts/pending', requireRole('admin'), async (_req, res) => {
+  try {
+    const pool = await getPool()
+    const result = await pool.request().query(`
+      SELECT MaTaiKhoan AS id, TenDangNhap AS username, HoTen AS displayName, Email AS email,
+             VaiTroYeuCau AS requestedRole, TenDonVi AS orgName, DiaChi AS address,
+             SDT AS phone, ChucVu AS position
+      FROM TAI_KHOAN
+      WHERE TrangThai = ${nText('Chờ duyệt')}
+      ORDER BY MaTaiKhoan
+    `)
+    res.json(result.recordset)
+  } catch (error) { safeError(res, error) }
+})
+app.patch('/api/accounts/:username/approve', requireRole('admin'), async (req, res) => {
+  try {
+    const pool = await getPool()
+    const found = await pool.request()
+      .input('TenDangNhap', sql.VarChar(50), req.params.username)
+      .query(`SELECT VaiTroYeuCau, HoTen, Email, TenDonVi, DiaChi, SDT, ChucVu FROM TAI_KHOAN WHERE TenDangNhap = @TenDangNhap AND TrangThai = ${nText('Chờ duyệt')}`)
+    if (!found.recordset.length) return res.status(404).json({ message: 'Không tìm thấy yêu cầu chờ duyệt.' })
+    const row = found.recordset[0]
+    const requestedRole = String(row.VaiTroYeuCau || '').toUpperCase()
+
+    const tx = new sql.Transaction(pool)
+    await tx.begin()
+    try {
+      let maBV = null
+      let maNV = null
+      if (requestedRole === 'HOSPITAL') {
+        maBV = await nextId(pool, 'BENH_VIEN', 'MaBV', 'BV')
+        await new sql.Request(tx)
+          .input('MaBV', sql.VarChar(20), maBV)
+          .input('SDT', sql.VarChar(15), row.SDT || '')
+          .query(`INSERT INTO BENH_VIEN VALUES (@MaBV, ${nText(row.TenDonVi, T.newHospital)}, ${nText(row.DiaChi)}, @SDT)`)
+      } else if (requestedRole === 'STAFF') {
+        maNV = await nextId(pool, 'NHAN_VIEN', 'MaNV', 'NV')
+        await new sql.Request(tx)
+          .input('MaNV', sql.VarChar(20), maNV)
+          .input('Email', sql.VarChar(120), row.Email || '')
+          .query(`INSERT INTO NHAN_VIEN VALUES (@MaNV, ${nText(row.HoTen)}, ${nText(row.ChucVu, 'Nhân viên')}, @Email)`)
+      } else {
+        await tx.rollback().catch(() => {})
+        return res.status(400).json({ message: 'Vai trò yêu cầu không hợp lệ.' })
+      }
+      const approveReq = new sql.Request(tx).input('TenDangNhap', sql.VarChar(50), req.params.username)
+      approveReq.input('MaBV', sql.VarChar(20), maBV)
+      approveReq.input('MaNV', sql.VarChar(20), maNV)
+      await approveReq.execute('sp_DuyetTaiKhoan')
+      await tx.commit()
+    } catch (err) {
+      await tx.rollback().catch(() => {})
+      throw err
+    }
+    const result = await pool.request().input('TenDangNhap', sql.VarChar(50), req.params.username).query('SELECT * FROM TAI_KHOAN WHERE TenDangNhap = @TenDangNhap')
+    res.json(mapAccount(result.recordset[0]))
+  } catch (error) { safeError(res, error) }
+})
+app.delete('/api/accounts/:username/reject', requireRole('admin'), async (req, res) => {
+  try { const pool = await getPool(); await pool.request().input('TenDangNhap', sql.VarChar(50), req.params.username).execute('sp_TuChoiTaiKhoan'); res.status(204).end() }
   catch (error) { safeError(res, error) }
 })
 
@@ -225,11 +383,12 @@ app.get('/api/storages', async (_req, res) => {
   catch (error) { safeError(res, error) }
 })
 
-app.get('/api/donors', async (_req, res) => {
+app.get('/api/donors', async (req, res) => {
+  if (req.user?.role === 'donor') return res.status(403).json({ message: 'Bạn chỉ có thể xem hồ sơ của mình.' })
   try { const pool = await getPool(); const result = await pool.request().query('SELECT MaNguoiHien AS id, HoTen AS name, NgaySinh AS birthDate, GioiTinh AS gender, SDT AS phone, MaNhomMau AS bloodGroup, BenhLy AS medicalHistory, DiemTichLuy AS points, HangThanhVien AS memberRank FROM NGUOI_HIEN ORDER BY MaNguoiHien'); res.json(result.recordset) }
   catch (error) { safeError(res, error) }
 })
-app.post('/api/donors', async (req, res) => {
+app.post('/api/donors', requireRole('admin', 'staff'), async (req, res) => {
   const body = req.body || {}
   try {
     const pool = await getPool(); const id = await nextId(pool, 'NGUOI_HIEN', 'MaNguoiHien', 'NH')
@@ -244,7 +403,7 @@ app.post('/api/donors', async (req, res) => {
     res.status(201).json({ id, ...body })
   } catch (error) { safeError(res, error) }
 })
-app.put('/api/donors/:id', async (req, res) => {
+app.put('/api/donors/:id', requireRole('admin', 'staff'), async (req, res) => {
   const body = req.body || {}
   try {
     const pool = await getPool()
@@ -261,49 +420,176 @@ app.put('/api/donors/:id', async (req, res) => {
     res.json({ id: req.params.id, ...body })
   } catch (error) { safeError(res, error) }
 })
-app.delete('/api/donors/:id', async (req, res) => {
+app.delete('/api/donors/:id', requireRole('admin', 'staff'), async (req, res) => {
   try { const pool = await getPool(); await deleteRow(pool, 'NGUOI_HIEN', 'MaNguoiHien', req.params.id); res.status(204).end() }
   catch (error) { safeError(res, error) }
+})
+
+// Donor self-service: read/update own NGUOI_HIEN row.
+app.get('/api/donors/me', requireRole('donor'), async (req, res) => {
+  if (!req.user.donorId) return res.json(null)
+  try {
+    const pool = await getPool()
+    const result = await pool.request()
+      .input('MaNguoiHien', sql.VarChar(20), req.user.donorId)
+      .query('SELECT MaNguoiHien AS id, HoTen AS name, NgaySinh AS birthDate, GioiTinh AS gender, SDT AS phone, MaNhomMau AS bloodGroup, BenhLy AS medicalHistory, DiemTichLuy AS points, HangThanhVien AS memberRank FROM NGUOI_HIEN WHERE MaNguoiHien = @MaNguoiHien')
+    res.json(result.recordset[0] || null)
+  } catch (error) { safeError(res, error) }
+})
+app.put('/api/donors/me', requireRole('donor'), async (req, res) => {
+  if (!req.user.donorId) return res.status(400).json({ message: 'Tài khoản chưa có hồ sơ người hiến.' })
+  const body = req.body || {}
+  try {
+    const pool = await getPool()
+    // points + memberRank are not user-editable (they are system-managed)
+    await updateRow(pool, 'NGUOI_HIEN', 'MaNguoiHien', req.user.donorId, {
+      HoTen: { raw: nText(body.name, T.newDonor) },
+      NgaySinh: { type: sql.Date, value: body.birthDate ? new Date(body.birthDate) : new Date('2000-01-01') },
+      GioiTinh: { raw: nText(body.gender, T.other) },
+      SDT: { type: sql.VarChar(15), value: body.phone || '' },
+      BenhLy: { raw: nText(body.medicalHistory, T.no) },
+      MaNhomMau: { type: sql.VarChar(5), value: body.bloodGroup || 'O+' },
+    })
+    res.json({ id: req.user.donorId, ...body })
+  } catch (error) { safeError(res, error) }
+})
+app.get('/api/donors/me/donations', requireRole('donor'), async (req, res) => {
+  if (!req.user.donorId) return res.json([])
+  try {
+    const pool = await getPool()
+    const result = await pool.request()
+      .input('MaNguoiHien', sql.VarChar(20), req.user.donorId)
+      .query('SELECT MaGoiMau AS id, NgayHien AS donatedAt, TheTich AS volume, TrangThaiKiemDinh AS testStatus, MaNhomMau AS bloodGroup, MaChienDich AS campaignId FROM GOI_MAU_TOAN_PHAN WHERE MaNguoiHien = @MaNguoiHien ORDER BY NgayHien DESC')
+    res.json(result.recordset)
+  } catch (error) { safeError(res, error) }
+})
+app.get('/api/donors/me/points', requireRole('donor'), async (req, res) => {
+  if (!req.user.donorId) return res.json({ points: 0, memberRank: '', redemptions: [] })
+  try {
+    const pool = await getPool()
+    const profile = await pool.request()
+      .input('MaNguoiHien', sql.VarChar(20), req.user.donorId)
+      .query('SELECT DiemTichLuy AS points, HangThanhVien AS memberRank FROM NGUOI_HIEN WHERE MaNguoiHien = @MaNguoiHien')
+    const redemptions = await pool.request()
+      .input('MaNguoiHien', sql.VarChar(20), req.user.donorId)
+      .query('SELECT MaDoiQua AS id, TenQua AS name, NgayDoi AS redeemedAt, DiemDoi AS pointsSpent FROM QUY_DOI_DIEM WHERE MaNguoiHien = @MaNguoiHien ORDER BY NgayDoi DESC')
+    res.json({
+      points: profile.recordset[0]?.points ?? 0,
+      memberRank: profile.recordset[0]?.memberRank ?? '',
+      redemptions: redemptions.recordset,
+    })
+  } catch (error) { safeError(res, error) }
+})
+app.get('/api/donors/me/campaigns', requireRole('donor'), async (req, res) => {
+  if (!req.user.donorId) return res.json([])
+  try {
+    const pool = await getPool()
+    const result = await pool.request()
+      .input('MaNguoiHien', sql.VarChar(20), req.user.donorId)
+      .query(`
+        SELECT cd.MaChienDich AS id,
+               cd.TenChienDich AS name,
+               cd.DiaDiem AS location,
+               cd.ThoiGian AS time,
+               dk.NgayDangKy AS registeredAt
+        FROM DANG_KY_CHIEN_DICH dk
+        JOIN CHIEN_DICH cd ON cd.MaChienDich = dk.MaChienDich
+        WHERE dk.MaNguoiHien = @MaNguoiHien
+        ORDER BY cd.ThoiGian DESC
+      `)
+    res.json(result.recordset)
+  } catch (error) { safeError(res, error) }
 })
 
 app.get('/api/campaigns', async (_req, res) => {
   try { const pool = await getPool(); const result = await pool.request().query('SELECT MaChienDich AS id, TenChienDich AS name, DiaDiem AS location, ThoiGian AS time, SoLuongDuKien AS expected, SoLuongThucTe AS actual FROM CHIEN_DICH ORDER BY MaChienDich'); res.json(result.recordset) }
   catch (error) { safeError(res, error) }
 })
-app.post('/api/campaigns', async (req, res) => {
+app.post('/api/campaigns', requireRole('admin', 'staff'), async (req, res) => {
   const body = req.body || {}
-  try { const pool = await getPool(); const id = await nextId(pool, 'CHIEN_DICH', 'MaChienDich', 'CD'); await pool.request().input('MaChienDich', sql.VarChar(20), id).input('ThoiGian', sql.DateTime, asDateTime(body.time)).input('SoLuongDuKien', sql.Int, asInt(body.expected, 0)).input('SoLuongThucTe', sql.Int, asInt(body.actual, 0)).query(`INSERT INTO CHIEN_DICH VALUES (@MaChienDich, ${nText(body.name, T.newCampaign)}, ${nText(body.location)}, @ThoiGian, @SoLuongDuKien, @SoLuongThucTe)`); res.status(201).json({ id, ...body }) }
+  // SoLuongThucTe is system-managed (auto +/- on blood-bag insert/delete), so
+  // a new campaign always starts at 0 — we ignore any client-supplied actual.
+  try { const pool = await getPool(); const id = await nextId(pool, 'CHIEN_DICH', 'MaChienDich', 'CD'); await pool.request().input('MaChienDich', sql.VarChar(20), id).input('ThoiGian', sql.DateTime, asDateTime(body.time)).input('SoLuongDuKien', sql.Int, asInt(body.expected, 0)).query(`INSERT INTO CHIEN_DICH VALUES (@MaChienDich, ${nText(body.name, T.newCampaign)}, ${nText(body.location)}, @ThoiGian, @SoLuongDuKien, 0)`); res.status(201).json({ id, ...body, actual: 0 }) }
   catch (error) { safeError(res, error) }
 })
-app.put('/api/campaigns/:id', async (req, res) => {
+app.put('/api/campaigns/:id', requireRole('admin', 'staff'), async (req, res) => {
   const body = req.body || {}
   try {
     const pool = await getPool()
+    // SoLuongThucTe intentionally omitted — it's derived from blood bags and
+    // must not be overwritten by an edit form.
     await updateRow(pool, 'CHIEN_DICH', 'MaChienDich', req.params.id, {
       TenChienDich: { raw: nText(body.name, T.newCampaign) },
       DiaDiem: { raw: nText(body.location) },
       ThoiGian: { type: sql.DateTime, value: asDateTime(body.time) },
       SoLuongDuKien: { type: sql.Int, value: asInt(body.expected, 0) },
-      SoLuongThucTe: { type: sql.Int, value: asInt(body.actual, 0) },
     })
     res.json({ id: req.params.id, ...body })
   } catch (error) { safeError(res, error) }
 })
-app.delete('/api/campaigns/:id', async (req, res) => {
+app.delete('/api/campaigns/:id', requireRole('admin', 'staff'), async (req, res) => {
   try { const pool = await getPool(); await deleteRow(pool, 'CHIEN_DICH', 'MaChienDich', req.params.id); res.status(204).end() }
   catch (error) { safeError(res, error) }
+})
+
+// Donor self-service: register for a campaign. Donor identity is taken from
+// the session — never from the body — so a donor can never sign someone else up.
+app.post('/api/campaigns/:id/register', requireRole('donor'), async (req, res) => {
+  if (!req.user.donorId) return res.status(400).json({ message: 'Tài khoản chưa có hồ sơ người hiến.' })
+  try {
+    const pool = await getPool()
+    const exists = await pool.request()
+      .input('MaChienDich', sql.VarChar(20), req.params.id)
+      .query('SELECT 1 AS hit FROM CHIEN_DICH WHERE MaChienDich = @MaChienDich')
+    if (!exists.recordset.length) return res.status(404).json({ message: 'Không tìm thấy chiến dịch.' })
+    await pool.request()
+      .input('MaChienDich', sql.VarChar(20), req.params.id)
+      .input('MaNguoiHien', sql.VarChar(20), req.user.donorId)
+      .input('NgayDangKy', sql.DateTime, new Date())
+      .query('INSERT INTO DANG_KY_CHIEN_DICH VALUES (@MaChienDich, @MaNguoiHien, @NgayDangKy)')
+    res.status(201).json({ campaignId: req.params.id, donorId: req.user.donorId })
+  } catch (error) { safeError(res, error) }
+})
+app.delete('/api/campaigns/:id/register', requireRole('donor'), async (req, res) => {
+  if (!req.user.donorId) return res.status(400).json({ message: 'Tài khoản chưa có hồ sơ người hiến.' })
+  try {
+    const pool = await getPool()
+    await pool.request()
+      .input('MaChienDich', sql.VarChar(20), req.params.id)
+      .input('MaNguoiHien', sql.VarChar(20), req.user.donorId)
+      .query('DELETE FROM DANG_KY_CHIEN_DICH WHERE MaChienDich = @MaChienDich AND MaNguoiHien = @MaNguoiHien')
+    res.status(204).end()
+  } catch (error) { safeError(res, error) }
+})
+app.get('/api/campaigns/:id/registrations', requireRole('admin', 'staff'), async (req, res) => {
+  try {
+    const pool = await getPool()
+    const result = await pool.request()
+      .input('MaChienDich', sql.VarChar(20), req.params.id)
+      .query(`
+        SELECT nh.MaNguoiHien AS donorId,
+               nh.HoTen AS donorName,
+               nh.MaNhomMau AS bloodGroup,
+               dk.NgayDangKy AS registeredAt
+        FROM DANG_KY_CHIEN_DICH dk
+        JOIN NGUOI_HIEN nh ON nh.MaNguoiHien = dk.MaNguoiHien
+        WHERE dk.MaChienDich = @MaChienDich
+        ORDER BY dk.NgayDangKy
+      `)
+    res.json(result.recordset)
+  } catch (error) { safeError(res, error) }
 })
 
 app.get('/api/hospitals', async (_req, res) => {
   try { const pool = await getPool(); const result = await pool.request().query('SELECT MaBV AS id, TenBV AS name, DiaChi AS address, SDT AS phone FROM BENH_VIEN ORDER BY MaBV'); res.json(result.recordset) }
   catch (error) { safeError(res, error) }
 })
-app.post('/api/hospitals', async (req, res) => {
+app.post('/api/hospitals', requireRole('admin', 'staff'), async (req, res) => {
   const body = req.body || {}
   try { const pool = await getPool(); const id = await nextId(pool, 'BENH_VIEN', 'MaBV', 'BV'); await pool.request().input('MaBV', sql.VarChar(20), id).input('SDT', sql.VarChar(15), body.phone || '').query(`INSERT INTO BENH_VIEN VALUES (@MaBV, ${nText(body.name, T.newHospital)}, ${nText(body.address)}, @SDT)`); res.status(201).json({ id, ...body }) }
   catch (error) { safeError(res, error) }
 })
-app.put('/api/hospitals/:id', async (req, res) => {
+app.put('/api/hospitals/:id', requireRole('admin', 'staff'), async (req, res) => {
   const body = req.body || {}
   try {
     const pool = await getPool()
@@ -315,49 +601,97 @@ app.put('/api/hospitals/:id', async (req, res) => {
     res.json({ id: req.params.id, ...body })
   } catch (error) { safeError(res, error) }
 })
-app.delete('/api/hospitals/:id', async (req, res) => {
+app.delete('/api/hospitals/:id', requireRole('admin', 'staff'), async (req, res) => {
   try { const pool = await getPool(); await deleteRow(pool, 'BENH_VIEN', 'MaBV', req.params.id); res.status(204).end() }
   catch (error) { safeError(res, error) }
 })
 
-app.get('/api/patients', async (_req, res) => {
-  try { const pool = await getPool(); const result = await pool.request().query('SELECT MaBenhNhan AS id, HoTen AS name, NgaySinh AS birthDate, MaNhomMau AS bloodGroup, BenhAn AS medicalRecord, MaBV AS hospitalId FROM BENH_NHAN ORDER BY MaBenhNhan'); res.json(result.recordset) }
-  catch (error) { safeError(res, error) }
+app.get('/api/patients', async (req, res) => {
+  if (req.user?.role === 'donor') return res.status(403).json({ message: 'Không có quyền xem danh sách bệnh nhân.' })
+  try {
+    const pool = await getPool()
+    const request = pool.request()
+    let where = ''
+    if (req.user?.role === 'hospital' && req.user.hospitalId) {
+      request.input('MaBV', sql.VarChar(20), req.user.hospitalId)
+      where = 'WHERE MaBV = @MaBV'
+    }
+    const result = await request.query(`SELECT MaBenhNhan AS id, HoTen AS name, NgaySinh AS birthDate, MaNhomMau AS bloodGroup, BenhAn AS medicalRecord, MaBV AS hospitalId FROM BENH_NHAN ${where} ORDER BY MaBenhNhan`)
+    res.json(result.recordset)
+  } catch (error) { safeError(res, error) }
 })
-app.post('/api/patients', async (req, res) => {
+app.post('/api/patients', requireRole('admin', 'staff', 'hospital'), async (req, res) => {
   const body = req.body || {}
-  try { const pool = await getPool(); const id = await nextId(pool, 'BENH_NHAN', 'MaBenhNhan', 'BN'); const hospitalId = body.hospitalId || await firstValue(pool, 'SELECT TOP 1 MaBV AS value FROM BENH_VIEN ORDER BY MaBV', 'BV001'); await pool.request().input('MaBenhNhan', sql.VarChar(20), id).input('NgaySinh', sql.Date, body.birthDate ? new Date(body.birthDate) : new Date('1990-01-01')).input('MaNhomMau', sql.VarChar(5), body.bloodGroup || 'O+').input('MaBV', sql.VarChar(20), hospitalId).query(`INSERT INTO BENH_NHAN VALUES (@MaBenhNhan, ${nText(body.name, T.newPatient)}, @NgaySinh, ${nText(body.medicalRecord)}, @MaNhomMau, @MaBV)`); res.status(201).json({ id, ...body, hospitalId }) }
-  catch (error) { safeError(res, error) }
+  try {
+    const pool = await getPool(); const id = await nextId(pool, 'BENH_NHAN', 'MaBenhNhan', 'BN')
+    const hospitalId = req.user.role === 'hospital'
+      ? (req.user.hospitalId || 'BV001')
+      : (body.hospitalId || await firstValue(pool, 'SELECT TOP 1 MaBV AS value FROM BENH_VIEN ORDER BY MaBV', 'BV001'))
+    await pool.request().input('MaBenhNhan', sql.VarChar(20), id).input('NgaySinh', sql.Date, body.birthDate ? new Date(body.birthDate) : new Date('1990-01-01')).input('MaNhomMau', sql.VarChar(5), body.bloodGroup || 'O+').input('MaBV', sql.VarChar(20), hospitalId).query(`INSERT INTO BENH_NHAN VALUES (@MaBenhNhan, ${nText(body.name, T.newPatient)}, @NgaySinh, ${nText(body.medicalRecord)}, @MaNhomMau, @MaBV)`)
+    res.status(201).json({ id, ...body, hospitalId })
+  } catch (error) { safeError(res, error) }
 })
-app.put('/api/patients/:id', async (req, res) => {
+app.put('/api/patients/:id', requireRole('admin', 'staff', 'hospital'), async (req, res) => {
   const body = req.body || {}
   try {
     const pool = await getPool()
+    if (req.user.role === 'hospital') {
+      const owned = await pool.request().input('_id', sql.VarChar(20), req.params.id).query('SELECT MaBV FROM BENH_NHAN WHERE MaBenhNhan = @_id')
+      if (!owned.recordset.length) return res.status(404).json({ message: 'Không tìm thấy bệnh nhân.' })
+      if (owned.recordset[0].MaBV !== req.user.hospitalId) {
+        return res.status(403).json({ message: 'Bệnh nhân không thuộc bệnh viện của bạn.' })
+      }
+    }
+    const targetHospitalId = req.user.role === 'hospital' ? req.user.hospitalId : (body.hospitalId || 'BV001')
     await updateRow(pool, 'BENH_NHAN', 'MaBenhNhan', req.params.id, {
       HoTen: { raw: nText(body.name, T.newPatient) },
       NgaySinh: { type: sql.Date, value: body.birthDate ? new Date(body.birthDate) : new Date('1990-01-01') },
       BenhAn: { raw: nText(body.medicalRecord) },
       MaNhomMau: { type: sql.VarChar(5), value: body.bloodGroup || 'O+' },
-      MaBV: { type: sql.VarChar(20), value: body.hospitalId || 'BV001' },
+      MaBV: { type: sql.VarChar(20), value: targetHospitalId },
     })
-    res.json({ id: req.params.id, ...body })
+    res.json({ id: req.params.id, ...body, hospitalId: targetHospitalId })
   } catch (error) { safeError(res, error) }
 })
-app.delete('/api/patients/:id', async (req, res) => {
-  try { const pool = await getPool(); await deleteRow(pool, 'BENH_NHAN', 'MaBenhNhan', req.params.id); res.status(204).end() }
-  catch (error) { safeError(res, error) }
+app.delete('/api/patients/:id', requireRole('admin', 'staff', 'hospital'), async (req, res) => {
+  try {
+    const pool = await getPool()
+    if (req.user.role === 'hospital') {
+      const owned = await pool.request().input('_id', sql.VarChar(20), req.params.id).query('SELECT MaBV FROM BENH_NHAN WHERE MaBenhNhan = @_id')
+      if (!owned.recordset.length) return res.status(404).json({ message: 'Không tìm thấy bệnh nhân.' })
+      if (owned.recordset[0].MaBV !== req.user.hospitalId) {
+        return res.status(403).json({ message: 'Bệnh nhân không thuộc bệnh viện của bạn.' })
+      }
+    }
+    await deleteRow(pool, 'BENH_NHAN', 'MaBenhNhan', req.params.id)
+    res.status(204).end()
+  } catch (error) { safeError(res, error) }
 })
 
 app.get('/api/blood-bags', async (_req, res) => {
   try { const pool = await getPool(); const result = await pool.request().query('SELECT MaGoiMau AS id, NgayHien AS donatedAt, TheTich AS volume, TrangThaiKiemDinh AS testStatus, MaNguoiHien AS donorId, MaNhomMau AS bloodGroup, MaChienDich AS campaignId, MaNV_ThuNhan AS staffId FROM GOI_MAU_TOAN_PHAN ORDER BY MaGoiMau'); res.json(result.recordset) }
   catch (error) { safeError(res, error) }
 })
-app.post('/api/blood-bags', async (req, res) => {
+// Reward per successful donation. Cheap rule of thumb for the lab demo;
+// real systems weigh by volume and component, but DETAILS.md doesn't model that.
+const POINTS_PER_DONATION = 50
+
+app.post('/api/blood-bags', requireRole('admin', 'staff'), async (req, res) => {
   const body = req.body || {}
-  try { const pool = await getPool(); const id = await nextId(pool, 'GOI_MAU_TOAN_PHAN', 'MaGoiMau', 'GM'); const donorId = body.donorId || await firstValue(pool, 'SELECT TOP 1 MaNguoiHien AS value FROM NGUOI_HIEN ORDER BY MaNguoiHien', 'NH001'); const campaignId = body.campaignId || await firstValue(pool, 'SELECT TOP 1 MaChienDich AS value FROM CHIEN_DICH ORDER BY MaChienDich', 'CD001'); const staffId = body.staffId || await firstValue(pool, 'SELECT TOP 1 MaNV AS value FROM NHAN_VIEN ORDER BY MaNV', 'NV001'); await pool.request().input('MaGoiMau', sql.VarChar(20), id).input('NgayHien', sql.DateTime, asDateTime(body.donatedAt)).input('TheTich', sql.Int, asInt(body.volume, 350)).input('MaNguoiHien', sql.VarChar(20), donorId).input('MaNhomMau', sql.VarChar(5), body.bloodGroup || 'O+').input('MaChienDich', sql.VarChar(20), campaignId).input('MaNV_ThuNhan', sql.VarChar(20), staffId).query(`INSERT INTO GOI_MAU_TOAN_PHAN VALUES (@MaGoiMau, @NgayHien, @TheTich, ${nText(body.testStatus, T.waitingTest)}, @MaNguoiHien, @MaNhomMau, @MaChienDich, @MaNV_ThuNhan)`); res.status(201).json({ id, ...body, donorId, campaignId, staffId }) }
-  catch (error) { safeError(res, error) }
+  try {
+    const pool = await getPool(); const id = await nextId(pool, 'GOI_MAU_TOAN_PHAN', 'MaGoiMau', 'GM')
+    const donorId = body.donorId || await firstValue(pool, 'SELECT TOP 1 MaNguoiHien AS value FROM NGUOI_HIEN ORDER BY MaNguoiHien', 'NH001')
+    const campaignId = body.campaignId || await firstValue(pool, 'SELECT TOP 1 MaChienDich AS value FROM CHIEN_DICH ORDER BY MaChienDich', 'CD001')
+    const staffId = body.staffId || await firstValue(pool, 'SELECT TOP 1 MaNV AS value FROM NHAN_VIEN ORDER BY MaNV', 'NV001')
+    await pool.request().input('MaGoiMau', sql.VarChar(20), id).input('NgayHien', sql.DateTime, asDateTime(body.donatedAt)).input('TheTich', sql.Int, asInt(body.volume, 350)).input('MaNguoiHien', sql.VarChar(20), donorId).input('MaNhomMau', sql.VarChar(5), body.bloodGroup || 'O+').input('MaChienDich', sql.VarChar(20), campaignId).input('MaNV_ThuNhan', sql.VarChar(20), staffId).query(`INSERT INTO GOI_MAU_TOAN_PHAN VALUES (@MaGoiMau, @NgayHien, @TheTich, ${nText(body.testStatus, T.waitingTest)}, @MaNguoiHien, @MaNhomMau, @MaChienDich, @MaNV_ThuNhan)`)
+    // Auto-update derived fields. Best-effort; FK constraints already enforce
+    // that donorId/campaignId exist by the time we reach here.
+    await pool.request().input('MaChienDich', sql.VarChar(20), campaignId).query('UPDATE CHIEN_DICH SET SoLuongThucTe = ISNULL(SoLuongThucTe, 0) + 1 WHERE MaChienDich = @MaChienDich')
+    await pool.request().input('MaNguoiHien', sql.VarChar(20), donorId).input('Diem', sql.Int, POINTS_PER_DONATION).query('UPDATE NGUOI_HIEN SET DiemTichLuy = ISNULL(DiemTichLuy, 0) + @Diem WHERE MaNguoiHien = @MaNguoiHien')
+    res.status(201).json({ id, ...body, donorId, campaignId, staffId })
+  } catch (error) { safeError(res, error) }
 })
-app.put('/api/blood-bags/:id', async (req, res) => {
+app.put('/api/blood-bags/:id', requireRole('admin', 'staff'), async (req, res) => {
   const body = req.body || {}
   try {
     const pool = await getPool()
@@ -373,21 +707,37 @@ app.put('/api/blood-bags/:id', async (req, res) => {
     res.json({ id: req.params.id, ...body })
   } catch (error) { safeError(res, error) }
 })
-app.delete('/api/blood-bags/:id', async (req, res) => {
-  try { const pool = await getPool(); await deleteRow(pool, 'GOI_MAU_TOAN_PHAN', 'MaGoiMau', req.params.id); res.status(204).end() }
-  catch (error) { safeError(res, error) }
+app.delete('/api/blood-bags/:id', requireRole('admin', 'staff'), async (req, res) => {
+  try {
+    const pool = await getPool()
+    // Reverse the derived counters before deleting; if the bag isn't there
+    // the SELECT just returns no rows and we still return 204 with safeError
+    // catching FK conflicts.
+    const meta = await pool.request().input('MaGoiMau', sql.VarChar(20), req.params.id).query('SELECT MaChienDich, MaNguoiHien FROM GOI_MAU_TOAN_PHAN WHERE MaGoiMau = @MaGoiMau')
+    await deleteRow(pool, 'GOI_MAU_TOAN_PHAN', 'MaGoiMau', req.params.id)
+    if (meta.recordset.length) {
+      const { MaChienDich, MaNguoiHien } = meta.recordset[0]
+      if (MaChienDich) {
+        await pool.request().input('MaChienDich', sql.VarChar(20), MaChienDich).query('UPDATE CHIEN_DICH SET SoLuongThucTe = CASE WHEN ISNULL(SoLuongThucTe, 0) > 0 THEN SoLuongThucTe - 1 ELSE 0 END WHERE MaChienDich = @MaChienDich')
+      }
+      if (MaNguoiHien) {
+        await pool.request().input('MaNguoiHien', sql.VarChar(20), MaNguoiHien).input('Diem', sql.Int, POINTS_PER_DONATION).query('UPDATE NGUOI_HIEN SET DiemTichLuy = CASE WHEN ISNULL(DiemTichLuy, 0) > @Diem THEN DiemTichLuy - @Diem ELSE 0 END WHERE MaNguoiHien = @MaNguoiHien')
+      }
+    }
+    res.status(204).end()
+  } catch (error) { safeError(res, error) }
 })
 
 app.get('/api/lab-tests', async (_req, res) => {
   try { const pool = await getPool(); const result = await pool.request().query('SELECT MaXetNghiem AS id, LoaiXetNghiem AS type, KetQua AS result, NgayXetNghiem AS testedAt, MaGoiMau AS bloodBagId, MaNV_ThucHien AS staffId FROM KET_QUA_XET_NGHIEM ORDER BY MaXetNghiem'); res.json(result.recordset) }
   catch (error) { safeError(res, error) }
 })
-app.post('/api/lab-tests', async (req, res) => {
+app.post('/api/lab-tests', requireRole('admin', 'staff'), async (req, res) => {
   const body = req.body || {}
   try { const pool = await getPool(); const id = await nextId(pool, 'KET_QUA_XET_NGHIEM', 'MaXetNghiem', 'XN'); const bloodBagId = body.bloodBagId || await firstValue(pool, 'SELECT TOP 1 MaGoiMau AS value FROM GOI_MAU_TOAN_PHAN ORDER BY MaGoiMau', 'GM001'); const staffId = body.staffId || await firstValue(pool, 'SELECT TOP 1 MaNV AS value FROM NHAN_VIEN ORDER BY MaNV', 'NV001'); await pool.request().input('MaXetNghiem', sql.VarChar(20), id).input('NgayXetNghiem', sql.DateTime, asDateTime(body.testedAt)).input('MaGoiMau', sql.VarChar(20), bloodBagId).input('MaNV_ThucHien', sql.VarChar(20), staffId).query(`INSERT INTO KET_QUA_XET_NGHIEM VALUES (@MaXetNghiem, ${nText(body.type, 'HIV')}, ${nText(body.result, T.negative)}, @NgayXetNghiem, @MaGoiMau, @MaNV_ThucHien)`); res.status(201).json({ id, ...body, bloodBagId, staffId }) }
   catch (error) { safeError(res, error) }
 })
-app.put('/api/lab-tests/:id', async (req, res) => {
+app.put('/api/lab-tests/:id', requireRole('admin', 'staff'), async (req, res) => {
   const body = req.body || {}
   try {
     const pool = await getPool()
@@ -401,75 +751,224 @@ app.put('/api/lab-tests/:id', async (req, res) => {
     res.json({ id: req.params.id, ...body })
   } catch (error) { safeError(res, error) }
 })
-app.delete('/api/lab-tests/:id', async (req, res) => {
+app.delete('/api/lab-tests/:id', requireRole('admin', 'staff'), async (req, res) => {
   try { const pool = await getPool(); await deleteRow(pool, 'KET_QUA_XET_NGHIEM', 'MaXetNghiem', req.params.id); res.status(204).end() }
   catch (error) { safeError(res, error) }
 })
+
+// Workflow guard: a bag can be split into components only if its kiểm định is
+// "Đạt" AND no lab test for it returned "Dương tính". Returns null when OK,
+// otherwise an error message describing the block.
+async function checkBagReadyForComponents(pool, bagId) {
+  const bag = await pool.request().input('MaGoiMau', sql.VarChar(20), bagId).query('SELECT TrangThaiKiemDinh FROM GOI_MAU_TOAN_PHAN WHERE MaGoiMau = @MaGoiMau')
+  if (!bag.recordset.length) return 'Không tìm thấy gói máu.'
+  const status = String(bag.recordset[0].TrangThaiKiemDinh || '').trim()
+  if (status !== 'Đạt') return 'Gói máu chưa đạt xét nghiệm, không thể tách thành phần.'
+  const reactive = await pool.request().input('MaGoiMau', sql.VarChar(20), bagId).query("SELECT 1 AS hit FROM KET_QUA_XET_NGHIEM WHERE MaGoiMau = @MaGoiMau AND (KetQua LIKE N'%Dương%' OR KetQua LIKE N'%Reactive%')")
+  if (reactive.recordset.length) return 'Gói máu có kết quả xét nghiệm dương tính, không thể tách thành phần.'
+  return null
+}
+
+// Standard shelf life by component type (days from collection).
+const COMPONENT_SHELF_LIFE_DAYS = {
+  'Hồng cầu': 42,
+  'Huyết tương': 365,
+  'Tiểu cầu': 5,
+}
+function defaultExpiry(componentType, donatedAt) {
+  const days = COMPONENT_SHELF_LIFE_DAYS[String(componentType || '').trim()] ?? 35
+  const base = donatedAt ? new Date(donatedAt) : new Date()
+  return new Date(base.getTime() + days * 24 * 60 * 60 * 1000)
+}
 
 app.get('/api/components', async (_req, res) => {
   try { const pool = await getPool(); const result = await pool.request().query('SELECT MaThanhPhan AS id, LoaiThanhPhan AS type, TheTichThucTe AS volume, HanSuDung AS expiresAt, TrangThai AS status, MaGoiMau AS bloodBagId, MaViTri AS storageId FROM THANH_PHAN_MAU ORDER BY MaThanhPhan'); res.json(result.recordset) }
   catch (error) { safeError(res, error) }
 })
-app.post('/api/components', async (req, res) => {
-  const body = req.body || {}
-  try { const pool = await getPool(); const id = await nextId(pool, 'THANH_PHAN_MAU', 'MaThanhPhan', 'TP'); const bloodBagId = body.bloodBagId || await firstValue(pool, 'SELECT TOP 1 MaGoiMau AS value FROM GOI_MAU_TOAN_PHAN ORDER BY MaGoiMau', 'GM001'); const storageId = body.storageId || await firstValue(pool, 'SELECT TOP 1 MaViTri AS value FROM VI_TRI_KHO ORDER BY MaViTri', 'VT001'); const expiresAt = body.expiresAt ? new Date(body.expiresAt) : new Date(Date.now() + 35 * 24 * 60 * 60 * 1000); await pool.request().input('MaThanhPhan', sql.VarChar(20), id).input('TheTichThucTe', sql.Int, asInt(body.volume, 250)).input('HanSuDung', sql.Date, expiresAt).input('MaGoiMau', sql.VarChar(20), bloodBagId).input('MaViTri', sql.VarChar(20), storageId).query(`INSERT INTO THANH_PHAN_MAU VALUES (@MaThanhPhan, ${nText(body.type, T.redCells)}, @TheTichThucTe, @HanSuDung, ${nText(body.status, T.ready)}, @MaGoiMau, @MaViTri)`); res.status(201).json({ id, ...body, bloodBagId, storageId }) }
-  catch (error) { safeError(res, error) }
-})
-app.put('/api/components/:id', async (req, res) => {
+app.post('/api/components', requireRole('admin', 'staff'), async (req, res) => {
   const body = req.body || {}
   try {
     const pool = await getPool()
+    const id = await nextId(pool, 'THANH_PHAN_MAU', 'MaThanhPhan', 'TP')
+    const bloodBagId = body.bloodBagId || await firstValue(pool, 'SELECT TOP 1 MaGoiMau AS value FROM GOI_MAU_TOAN_PHAN ORDER BY MaGoiMau', 'GM001')
+    const blocker = await checkBagReadyForComponents(pool, bloodBagId)
+    if (blocker) return res.status(400).json({ message: blocker })
+    const storageId = body.storageId || await firstValue(pool, 'SELECT TOP 1 MaViTri AS value FROM VI_TRI_KHO ORDER BY MaViTri', 'VT001')
+    let expiresAt
+    if (body.expiresAt) {
+      expiresAt = new Date(body.expiresAt)
+    } else {
+      const bagDate = await firstValue(pool, `SELECT TOP 1 NgayHien AS value FROM GOI_MAU_TOAN_PHAN WHERE MaGoiMau = '${bloodBagId.replace(/'/g, "''")}'`, null)
+      expiresAt = defaultExpiry(body.type, bagDate)
+    }
+    await pool.request().input('MaThanhPhan', sql.VarChar(20), id).input('TheTichThucTe', sql.Int, asInt(body.volume, 250)).input('HanSuDung', sql.Date, expiresAt).input('MaGoiMau', sql.VarChar(20), bloodBagId).input('MaViTri', sql.VarChar(20), storageId).query(`INSERT INTO THANH_PHAN_MAU VALUES (@MaThanhPhan, ${nText(body.type, T.redCells)}, @TheTichThucTe, @HanSuDung, ${nText(body.status, T.ready)}, @MaGoiMau, @MaViTri)`)
+    res.status(201).json({ id, ...body, bloodBagId, storageId, expiresAt })
+  } catch (error) { safeError(res, error) }
+})
+app.put('/api/components/:id', requireRole('admin', 'staff'), async (req, res) => {
+  const body = req.body || {}
+  try {
+    const pool = await getPool()
+    const targetBag = body.bloodBagId || 'GM001'
+    // Re-check the bag if the caller is changing it.
+    const blocker = await checkBagReadyForComponents(pool, targetBag)
+    if (blocker) return res.status(400).json({ message: blocker })
+    let expiresAt
+    if (body.expiresAt) {
+      expiresAt = new Date(body.expiresAt)
+    } else {
+      const bagDate = await firstValue(pool, `SELECT TOP 1 NgayHien AS value FROM GOI_MAU_TOAN_PHAN WHERE MaGoiMau = '${targetBag.replace(/'/g, "''")}'`, null)
+      expiresAt = defaultExpiry(body.type, bagDate)
+    }
     await updateRow(pool, 'THANH_PHAN_MAU', 'MaThanhPhan', req.params.id, {
       LoaiThanhPhan: { raw: nText(body.type, T.redCells) },
       TheTichThucTe: { type: sql.Int, value: asInt(body.volume, 250) },
-      HanSuDung: { type: sql.Date, value: body.expiresAt ? new Date(body.expiresAt) : new Date(Date.now() + 35 * 24 * 60 * 60 * 1000) },
+      HanSuDung: { type: sql.Date, value: expiresAt },
       TrangThai: { raw: nText(body.status, T.ready) },
-      MaGoiMau: { type: sql.VarChar(20), value: body.bloodBagId || 'GM001' },
+      MaGoiMau: { type: sql.VarChar(20), value: targetBag },
       MaViTri: { type: sql.VarChar(20), value: body.storageId || 'VT001' },
     })
-    res.json({ id: req.params.id, ...body })
+    res.json({ id: req.params.id, ...body, expiresAt })
   } catch (error) { safeError(res, error) }
 })
-app.delete('/api/components/:id', async (req, res) => {
+app.delete('/api/components/:id', requireRole('admin', 'staff'), async (req, res) => {
   try { const pool = await getPool(); await deleteRow(pool, 'THANH_PHAN_MAU', 'MaThanhPhan', req.params.id); res.status(204).end() }
   catch (error) { safeError(res, error) }
 })
 
-app.get('/api/requests', async (_req, res) => {
-  try { const pool = await getPool(); const result = await pool.request().query('SELECT MaPhieuYC AS id, NgayYeuCau AS requestedAt, LoaiThanhPhanCan AS componentType, SoLuongML AS volume, TrangThaiDuyet AS status, MaBV AS hospitalId, MaBenhNhan AS patientId, MaNhomMau AS bloodGroup, MaNV_Duyet AS approverId FROM PHIEU_YEU_CAU ORDER BY MaPhieuYC'); res.json(result.recordset) }
-  catch (error) { safeError(res, error) }
+app.get('/api/requests', async (req, res) => {
+  if (req.user?.role === 'donor') return res.status(403).json({ message: 'Không có quyền xem phiếu yêu cầu.' })
+  try {
+    const pool = await getPool()
+    const request = pool.request()
+    let where = ''
+    if (req.user?.role === 'hospital' && req.user.hospitalId) {
+      request.input('MaBV', sql.VarChar(20), req.user.hospitalId)
+      where = 'WHERE MaBV = @MaBV'
+    }
+    const result = await request.query(`SELECT MaPhieuYC AS id, NgayYeuCau AS requestedAt, LoaiThanhPhanCan AS componentType, SoLuongML AS volume, TrangThaiDuyet AS status, MaBV AS hospitalId, MaBenhNhan AS patientId, MaNhomMau AS bloodGroup, MaNV_Duyet AS approverId FROM PHIEU_YEU_CAU ${where} ORDER BY MaPhieuYC`)
+    res.json(result.recordset)
+  } catch (error) { safeError(res, error) }
 })
-app.post('/api/requests', async (req, res) => {
+app.post('/api/requests', requireRole('admin', 'staff', 'hospital'), async (req, res) => {
   const body = req.body || {}
-  try { const pool = await getPool(); const id = await nextId(pool, 'PHIEU_YEU_CAU', 'MaPhieuYC', 'YC'); const hospitalId = body.hospitalId || await firstValue(pool, 'SELECT TOP 1 MaBV AS value FROM BENH_VIEN ORDER BY MaBV', 'BV001'); const patientId = body.patientId || await firstValue(pool, 'SELECT TOP 1 MaBenhNhan AS value FROM BENH_NHAN ORDER BY MaBenhNhan', 'BN001'); const approverId = body.approverId || await firstValue(pool, 'SELECT TOP 1 MaNV AS value FROM NHAN_VIEN ORDER BY MaNV', 'NV001'); await pool.request().input('MaPhieuYC', sql.VarChar(20), id).input('NgayYeuCau', sql.DateTime, asDateTime(body.requestedAt)).input('SoLuongML', sql.Int, asInt(body.volume, 250)).input('MaBV', sql.VarChar(20), hospitalId).input('MaBenhNhan', sql.VarChar(20), patientId).input('MaNhomMau', sql.VarChar(5), body.bloodGroup || 'O+').input('MaNV_Duyet', sql.VarChar(20), approverId).query(`INSERT INTO PHIEU_YEU_CAU VALUES (@MaPhieuYC, @NgayYeuCau, ${nText(body.componentType, T.redCells)}, @SoLuongML, ${nText(body.status, T.waitingApproval)}, @MaBV, @MaBenhNhan, @MaNhomMau, @MaNV_Duyet)`); res.status(201).json({ id, ...body, hospitalId, patientId, approverId }) }
-  catch (error) { safeError(res, error) }
+  try {
+    const pool = await getPool(); const id = await nextId(pool, 'PHIEU_YEU_CAU', 'MaPhieuYC', 'YC')
+    // Hospital must use their own MaBV; status starts at "Chờ duyệt" and they
+    // cannot self-approve. Admin/staff can supply hospitalId/status freely.
+    const isHospital = req.user.role === 'hospital'
+    const hospitalId = isHospital
+      ? (req.user.hospitalId || 'BV001')
+      : (body.hospitalId || await firstValue(pool, 'SELECT TOP 1 MaBV AS value FROM BENH_VIEN ORDER BY MaBV', 'BV001'))
+    const patientId = body.patientId || await firstValue(pool, 'SELECT TOP 1 MaBenhNhan AS value FROM BENH_NHAN ORDER BY MaBenhNhan', 'BN001')
+    const approverId = isHospital ? null : (body.approverId || null)
+    const status = isHospital ? T.waitingApproval : (body.status || T.waitingApproval)
+    const insert = pool.request()
+      .input('MaPhieuYC', sql.VarChar(20), id)
+      .input('NgayYeuCau', sql.DateTime, asDateTime(body.requestedAt))
+      .input('SoLuongML', sql.Int, asInt(body.volume, 250))
+      .input('MaBV', sql.VarChar(20), hospitalId)
+      .input('MaBenhNhan', sql.VarChar(20), patientId)
+      .input('MaNhomMau', sql.VarChar(5), body.bloodGroup || 'O+')
+    if (approverId) insert.input('MaNV_Duyet', sql.VarChar(20), approverId)
+    const approverSql = approverId ? '@MaNV_Duyet' : 'NULL'
+    await insert.query(`INSERT INTO PHIEU_YEU_CAU VALUES (@MaPhieuYC, @NgayYeuCau, ${nText(body.componentType, T.redCells)}, @SoLuongML, ${nText(status, T.waitingApproval)}, @MaBV, @MaBenhNhan, @MaNhomMau, ${approverSql})`)
+    res.status(201).json({ id, ...body, hospitalId, patientId, approverId, status })
+  } catch (error) { safeError(res, error) }
 })
-app.put('/api/requests/:id', async (req, res) => {
+app.put('/api/requests/:id', requireRole('admin', 'staff', 'hospital'), async (req, res) => {
   const body = req.body || {}
   try {
     const pool = await getPool()
-    await updateRow(pool, 'PHIEU_YEU_CAU', 'MaPhieuYC', req.params.id, {
+    const isHospital = req.user.role === 'hospital'
+    let preserved = null
+    if (isHospital) {
+      const owned = await pool.request().input('_id', sql.VarChar(20), req.params.id).query('SELECT MaBV, TrangThaiDuyet, MaNV_Duyet FROM PHIEU_YEU_CAU WHERE MaPhieuYC = @_id')
+      if (!owned.recordset.length) return res.status(404).json({ message: 'Không tìm thấy phiếu yêu cầu.' })
+      const row = owned.recordset[0]
+      if (row.MaBV !== req.user.hospitalId) {
+        return res.status(403).json({ message: 'Phiếu không thuộc bệnh viện của bạn.' })
+      }
+      if (String(row.TrangThaiDuyet || '').trim() !== T.waitingApproval) {
+        return res.status(409).json({ message: 'Chỉ phiếu đang chờ duyệt mới có thể chỉnh sửa.' })
+      }
+      preserved = row
+    }
+    const updates = {
       NgayYeuCau: { type: sql.DateTime, value: asDateTime(body.requestedAt) },
       LoaiThanhPhanCan: { raw: nText(body.componentType, T.redCells) },
       SoLuongML: { type: sql.Int, value: asInt(body.volume, 250) },
-      TrangThaiDuyet: { raw: nText(body.status, T.waitingApproval) },
-      MaBV: { type: sql.VarChar(20), value: body.hospitalId || 'BV001' },
       MaBenhNhan: { type: sql.VarChar(20), value: body.patientId || 'BN001' },
       MaNhomMau: { type: sql.VarChar(5), value: body.bloodGroup || 'O+' },
-      MaNV_Duyet: { type: sql.VarChar(20), value: body.approverId || 'NV001' },
-    })
+    }
+    if (isHospital) {
+      // Lock: hospital cannot change ownership, status, or approver.
+      updates.MaBV = { type: sql.VarChar(20), value: preserved.MaBV }
+      updates.TrangThaiDuyet = { raw: nText(preserved.TrangThaiDuyet, T.waitingApproval) }
+      if (preserved.MaNV_Duyet) {
+        updates.MaNV_Duyet = { type: sql.VarChar(20), value: preserved.MaNV_Duyet }
+      } else {
+        updates.MaNV_Duyet = { raw: 'NULL' }
+      }
+    } else {
+      updates.MaBV = { type: sql.VarChar(20), value: body.hospitalId || 'BV001' }
+      updates.TrangThaiDuyet = { raw: nText(body.status, T.waitingApproval) }
+      updates.MaNV_Duyet = { type: sql.VarChar(20), value: body.approverId || 'NV001' }
+    }
+    await updateRow(pool, 'PHIEU_YEU_CAU', 'MaPhieuYC', req.params.id, updates)
     res.json({ id: req.params.id, ...body })
   } catch (error) { safeError(res, error) }
 })
-app.delete('/api/requests/:id', async (req, res) => {
-  try { const pool = await getPool(); await deleteRow(pool, 'PHIEU_YEU_CAU', 'MaPhieuYC', req.params.id); res.status(204).end() }
-  catch (error) { safeError(res, error) }
-})
-
-app.get('/api/exports', async (_req, res) => {
+app.delete('/api/requests/:id', requireRole('admin', 'staff', 'hospital'), async (req, res) => {
   try {
     const pool = await getPool()
-    const result = await pool.request().query(`
+    if (req.user.role === 'hospital') {
+      const owned = await pool.request().input('_id', sql.VarChar(20), req.params.id).query('SELECT MaBV, TrangThaiDuyet FROM PHIEU_YEU_CAU WHERE MaPhieuYC = @_id')
+      if (!owned.recordset.length) return res.status(404).json({ message: 'Không tìm thấy phiếu yêu cầu.' })
+      const row = owned.recordset[0]
+      if (row.MaBV !== req.user.hospitalId) {
+        return res.status(403).json({ message: 'Phiếu không thuộc bệnh viện của bạn.' })
+      }
+      if (String(row.TrangThaiDuyet || '').trim() !== T.waitingApproval) {
+        return res.status(409).json({ message: 'Chỉ phiếu đang chờ duyệt mới có thể xóa.' })
+      }
+    }
+    await deleteRow(pool, 'PHIEU_YEU_CAU', 'MaPhieuYC', req.params.id)
+    res.status(204).end()
+  } catch (error) { safeError(res, error) }
+})
+
+// Staff/admin approve or reject a pending request. Body: { approve: boolean, reason? }
+app.patch('/api/requests/:id/approve', requireRole('admin', 'staff'), async (req, res) => {
+  const approve = req.body?.approve !== false
+  const newStatus = approve ? 'Đã duyệt' : 'Từ chối'
+  try {
+    const pool = await getPool()
+    const found = await pool.request().input('_id', sql.VarChar(20), req.params.id).query('SELECT TrangThaiDuyet FROM PHIEU_YEU_CAU WHERE MaPhieuYC = @_id')
+    if (!found.recordset.length) return res.status(404).json({ message: 'Không tìm thấy phiếu yêu cầu.' })
+    if (String(found.recordset[0].TrangThaiDuyet || '').trim() !== T.waitingApproval) {
+      return res.status(409).json({ message: 'Phiếu này đã được xử lý.' })
+    }
+    const approverId = req.user.staffId || await firstValue(pool, 'SELECT TOP 1 MaNV AS value FROM NHAN_VIEN ORDER BY MaNV', 'NV001')
+    await updateRow(pool, 'PHIEU_YEU_CAU', 'MaPhieuYC', req.params.id, {
+      TrangThaiDuyet: { raw: nText(newStatus) },
+      MaNV_Duyet: { type: sql.VarChar(20), value: approverId },
+    })
+    res.json({ id: req.params.id, status: newStatus, approverId })
+  } catch (error) { safeError(res, error) }
+})
+
+app.get('/api/exports', async (req, res) => {
+  if (req.user?.role === 'donor') return res.status(403).json({ message: 'Không có quyền xem phiếu xuất.' })
+  try {
+    const pool = await getPool()
+    const request = pool.request()
+    let where = ''
+    if (req.user?.role === 'hospital' && req.user.hospitalId) {
+      request.input('MaBV', sql.VarChar(20), req.user.hospitalId)
+      where = 'WHERE pyc.MaBV = @MaBV'
+    }
+    const result = await request.query(`
       SELECT px.MaPhieuXuat AS id,
              px.NgayXuat AS exportedAt,
              px.TongTheTich AS totalVolume,
@@ -483,26 +982,85 @@ app.get('/api/exports', async (_req, res) => {
               FROM CHI_TIET_XUAT ctx3
               WHERE ctx3.MaPhieuXuat = px.MaPhieuXuat) AS crossMatch
       FROM PHIEU_XUAT px
+      LEFT JOIN PHIEU_YEU_CAU pyc ON pyc.MaPhieuYC = px.MaPhieuYC
+      ${where}
       ORDER BY px.MaPhieuXuat
     `)
     res.json(result.recordset)
   } catch (error) { safeError(res, error) }
 })
-app.post('/api/exports', async (req, res) => {
+app.post('/api/exports', requireRole('admin', 'staff'), async (req, res) => {
   const body = req.body || {}
   try {
-    const pool = await getPool(); const id = await nextId(pool, 'PHIEU_XUAT', 'MaPhieuXuat', 'PX')
+    const pool = await getPool()
+    const id = await nextId(pool, 'PHIEU_XUAT', 'MaPhieuXuat', 'PX')
     const requestId = body.requestId || await firstValue(pool, 'SELECT TOP 1 MaPhieuYC AS value FROM PHIEU_YEU_CAU ORDER BY MaPhieuYC', 'YC001')
-    const staffId = body.staffId || await firstValue(pool, 'SELECT TOP 1 MaNV AS value FROM NHAN_VIEN ORDER BY MaNV', 'NV001')
+    const staffId = req.user?.staffId || body.staffId || await firstValue(pool, 'SELECT TOP 1 MaNV AS value FROM NHAN_VIEN ORDER BY MaNV', 'NV001')
     const componentId = body.componentId || await firstValue(pool, `SELECT TOP 1 MaThanhPhan AS value FROM THANH_PHAN_MAU WHERE TrangThai <> ${nText(T.exported)} ORDER BY HanSuDung, MaThanhPhan`, 'TP001')
     const totalVolume = asInt(body.totalVolume || body.volume, 250)
-    await pool.request().input('MaPhieuXuat', sql.VarChar(20), id).input('NgayXuat', sql.DateTime, asDateTime(body.exportedAt)).input('TongTheTich', sql.Int, totalVolume).input('MaPhieuYC', sql.VarChar(20), requestId).input('MaNV_Xuat', sql.VarChar(20), staffId).query('INSERT INTO PHIEU_XUAT VALUES (@MaPhieuXuat, @NgayXuat, @TongTheTich, @MaPhieuYC, @MaNV_Xuat)')
-    await pool.request().input('MaPhieuXuat', sql.VarChar(20), id).input('MaThanhPhan', sql.VarChar(20), componentId).query(`INSERT INTO CHI_TIET_XUAT VALUES (@MaPhieuXuat, @MaThanhPhan, ${nText(body.crossMatch, T.compatible)})`)
-    await pool.request().input('MaThanhPhan', sql.VarChar(20), componentId).query(`UPDATE THANH_PHAN_MAU SET TrangThai = ${nText(T.exported)} WHERE MaThanhPhan = @MaThanhPhan`)
-    res.status(201).json({ id, ...body, requestId, staffId, componentId, totalVolume })
+    const crossMatch = String(body.crossMatch || T.compatible)
+
+    // Workflow gate: validate request approval, blood-group match, cross-match,
+    // component status, expiry, and requested-volume cap before any write.
+    const reqRow = await pool.request().input('MaPhieuYC', sql.VarChar(20), requestId).query('SELECT TrangThaiDuyet, MaNhomMau, SoLuongML FROM PHIEU_YEU_CAU WHERE MaPhieuYC = @MaPhieuYC')
+    if (!reqRow.recordset.length) return res.status(404).json({ message: 'Không tìm thấy phiếu yêu cầu.' })
+    const requestRow = reqRow.recordset[0]
+    if (String(requestRow.TrangThaiDuyet || '').trim() !== 'Đã duyệt') {
+      return res.status(400).json({ message: 'Phiếu yêu cầu chưa được duyệt, không thể xuất kho.' })
+    }
+    const compRow = await pool.request().input('MaThanhPhan', sql.VarChar(20), componentId).query(`
+      SELECT tp.TrangThai AS TrangThai, tp.HanSuDung AS HanSuDung, gm.MaNhomMau AS MaNhomMau
+      FROM THANH_PHAN_MAU tp
+      LEFT JOIN GOI_MAU_TOAN_PHAN gm ON gm.MaGoiMau = tp.MaGoiMau
+      WHERE tp.MaThanhPhan = @MaThanhPhan
+    `)
+    if (!compRow.recordset.length) return res.status(404).json({ message: 'Không tìm thấy thành phần máu.' })
+    const componentRow = compRow.recordset[0]
+    if (String(componentRow.TrangThai || '').trim() !== T.ready) {
+      return res.status(400).json({ message: 'Thành phần đã xuất hoặc không sẵn sàng.' })
+    }
+    if (componentRow.HanSuDung && new Date(componentRow.HanSuDung) < new Date()) {
+      return res.status(400).json({ message: 'Thành phần đã hết hạn sử dụng.' })
+    }
+    if (componentRow.MaNhomMau && requestRow.MaNhomMau && componentRow.MaNhomMau !== requestRow.MaNhomMau) {
+      return res.status(400).json({ message: `Nhóm máu không khớp (yêu cầu ${requestRow.MaNhomMau}, thành phần ${componentRow.MaNhomMau}).` })
+    }
+    if (crossMatch.includes('Không')) {
+      return res.status(400).json({ message: 'Phản ứng chéo không hòa hợp, không thể xuất kho.' })
+    }
+    if (totalVolume > Number(requestRow.SoLuongML || 0)) {
+      return res.status(400).json({ message: `Vượt quá thể tích yêu cầu (${requestRow.SoLuongML} ml).` })
+    }
+
+    // All three writes either commit together or roll back together so a
+    // failure between INSERT detail and the status flip can't leave a
+    // half-issued component as still "Sẵn sàng".
+    const tx = new sql.Transaction(pool)
+    await tx.begin()
+    try {
+      await new sql.Request(tx)
+        .input('MaPhieuXuat', sql.VarChar(20), id)
+        .input('NgayXuat', sql.DateTime, asDateTime(body.exportedAt))
+        .input('TongTheTich', sql.Int, totalVolume)
+        .input('MaPhieuYC', sql.VarChar(20), requestId)
+        .input('MaNV_Xuat', sql.VarChar(20), staffId)
+        .query('INSERT INTO PHIEU_XUAT VALUES (@MaPhieuXuat, @NgayXuat, @TongTheTich, @MaPhieuYC, @MaNV_Xuat)')
+      await new sql.Request(tx)
+        .input('MaPhieuXuat', sql.VarChar(20), id)
+        .input('MaThanhPhan', sql.VarChar(20), componentId)
+        .query(`INSERT INTO CHI_TIET_XUAT VALUES (@MaPhieuXuat, @MaThanhPhan, ${nText(crossMatch, T.compatible)})`)
+      await new sql.Request(tx)
+        .input('MaThanhPhan', sql.VarChar(20), componentId)
+        .query(`UPDATE THANH_PHAN_MAU SET TrangThai = ${nText(T.exported)} WHERE MaThanhPhan = @MaThanhPhan`)
+      await tx.commit()
+    } catch (err) {
+      await tx.rollback().catch(() => {})
+      throw err
+    }
+    res.status(201).json({ id, ...body, requestId, staffId, componentId, totalVolume, crossMatch })
   } catch (error) { safeError(res, error) }
 })
-app.delete('/api/exports/:id', async (req, res) => {
+app.delete('/api/exports/:id', requireRole('admin', 'staff'), async (req, res) => {
   try {
     const pool = await getPool()
     const components = await pool.request().input('_id', sql.VarChar(20), req.params.id).query('SELECT MaThanhPhan FROM CHI_TIET_XUAT WHERE MaPhieuXuat = @_id')
@@ -526,7 +1084,10 @@ app.get('/api/reports/inventory', async (_req, res) => {
              COUNT(tp.MaThanhPhan) AS total
       FROM NHOM_MAU g
       LEFT JOIN GOI_MAU_TOAN_PHAN gm ON gm.MaNhomMau = g.MaNhomMau
-      LEFT JOIN THANH_PHAN_MAU tp ON tp.MaGoiMau = gm.MaGoiMau AND tp.TrangThai <> ${nText(T.exported)}
+      LEFT JOIN THANH_PHAN_MAU tp
+             ON tp.MaGoiMau = gm.MaGoiMau
+            AND tp.TrangThai = ${nText(T.ready)}
+            AND tp.HanSuDung > GETDATE()
       GROUP BY g.MaNhomMau
       ORDER BY g.MaNhomMau
     `)
@@ -534,7 +1095,7 @@ app.get('/api/reports/inventory', async (_req, res) => {
   } catch (error) { safeError(res, error) }
 })
 app.get('/api/reports/expiring', async (_req, res) => {
-  try { const pool = await getPool(); const result = await pool.request().query('SELECT MaThanhPhan AS id, LoaiThanhPhan AS type, HanSuDung AS expiresAt, TrangThai AS status FROM THANH_PHAN_MAU WHERE HanSuDung <= DATEADD(day, 30, GETDATE()) ORDER BY HanSuDung'); res.json(result.recordset) }
+  try { const pool = await getPool(); const result = await pool.request().query('SELECT MaThanhPhan AS id, LoaiThanhPhan AS type, HanSuDung AS expiresAt, TrangThai AS status FROM THANH_PHAN_MAU WHERE HanSuDung >= GETDATE() AND HanSuDung <= DATEADD(day, 30, GETDATE()) ORDER BY HanSuDung'); res.json(result.recordset) }
   catch (error) { safeError(res, error) }
 })
 app.get('/api/reports/campaigns', async (_req, res) => {

@@ -27,9 +27,9 @@ const columns = [
 
 <template>
   <CrudPage
-    title="Đăng ký hiến máu"
-    description="Ghi nhận người hiến mới và thông tin sức khỏe ban đầu."
-    form-title="Phiếu đăng ký hiến máu"
+    title="Người hiến máu"
+    description="Quản lý hồ sơ người hiến máu của trung tâm."
+    form-title="Hồ sơ người hiến"
     endpoint="/donors"
     :fields="fields"
     :columns="columns"

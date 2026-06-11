@@ -1,5 +1,5 @@
 <script setup>
-import { onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { api } from '../api'
 
 const props = defineProps({
@@ -11,6 +11,16 @@ const props = defineProps({
   fields: { type: Array, required: true },
   columns: { type: Array, required: true },
   emptyText: { type: String, default: 'Chưa có dữ liệu.' },
+  canCreate: { type: Boolean, default: true },
+  canEdit: { type: Boolean, default: true },
+  canDelete: { type: Boolean, default: true },
+  // Optional client-side row filter, e.g. for tenant scoping when the
+  // backend hasn't been wired up yet for a given role.
+  filterFn: { type: Function, default: null },
+  // Extra per-row buttons. Each item: { label, variant?, visibleIf?(row), onClick(row, ctx) }.
+  // ctx = { reload, startEdit, message: setMessage, error: setError }.
+  customActions: { type: Array, default: () => [] },
+  showRefresh: { type: Boolean, default: true },
 })
 
 const rows = ref([])
@@ -20,6 +30,8 @@ const error = ref('')
 const editingId = ref(null)
 const form = reactive({})
 const lookups = reactive({})
+
+const showActionsCol = computed(() => props.canEdit || props.canDelete || props.customActions.length > 0)
 
 function defaultFor(field) {
   return field.default ?? (field.options && field.options[0]?.id) ?? ''
@@ -48,12 +60,21 @@ async function loadRows() {
   loading.value = true
   error.value = ''
   try {
-    rows.value = await api.list(props.endpoint)
+    const data = await api.list(props.endpoint)
+    rows.value = props.filterFn ? props.filterFn(data) : data
   } catch (err) {
     error.value = err.message
   } finally {
     loading.value = false
   }
+}
+
+// Manual refresh: re-pull lookups + rows so cross-page changes (e.g. a blood
+// bag logged elsewhere bumping a campaign's actual count) show without a
+// full navigation away and back.
+async function refresh() {
+  await loadLookups()
+  await loadRows()
 }
 
 async function save() {
@@ -79,6 +100,7 @@ async function save() {
 }
 
 function startEdit(row) {
+  if (!props.canEdit) return
   props.fields.forEach((field) => {
     let value = row[field.key]
     if (value === null || value === undefined) value = defaultFor(field)
@@ -93,6 +115,7 @@ function startEdit(row) {
 }
 
 async function removeRow(row) {
+  if (!props.canDelete) return
   const confirmed = window.confirm(`Xóa mục "${row.id}"? Hành động này không thể hoàn tác.`)
   if (!confirmed) return
   loading.value = true
@@ -110,9 +133,40 @@ async function removeRow(row) {
   }
 }
 
+async function runCustomAction(action, row) {
+  loading.value = true
+  message.value = ''
+  error.value = ''
+  try {
+    await action.onClick(row, {
+      reload: loadRows,
+      startEdit,
+      setMessage: (m) => { message.value = m },
+      setError: (e) => { error.value = e },
+    })
+    await loadRows()
+  } catch (err) {
+    error.value = err.message
+  } finally {
+    loading.value = false
+  }
+}
+
+function isCustomActionVisible(action, row) {
+  return typeof action.visibleIf === 'function' ? action.visibleIf(row) : true
+}
+
 function optionsFor(field) {
   if (field.optionsFrom) return lookups[field.key] || []
   return field.options || []
+}
+
+// Option/label text. Some lookup endpoints (e.g. /blood-bags, /components,
+// /requests) don't return a `name`, so we fall back to a per-field labelFn,
+// then labelKey, then the id — never the literal string "undefined".
+function optionLabel(field, opt) {
+  if (field.labelFn) return field.labelFn(opt)
+  return opt[field.labelKey || 'name'] ?? opt.id
 }
 
 function isSelect(field) {
@@ -126,7 +180,13 @@ function display(row, column) {
   if (column.type === 'datetime') return new Date(value).toLocaleString('vi-VN')
   if (column.lookup && lookups[column.lookup]) {
     const match = lookups[column.lookup].find((item) => item.id === value)
-    if (match) return `${match.name} (${value})`
+    if (match) {
+      if (column.labelFn) return column.labelFn(match)
+      const label = match[column.labelKey || 'name']
+      // If the matched row has no usable label, show the raw id instead of
+      // rendering "undefined (id)".
+      return label == null ? value : `${label} (${value})`
+    }
   }
   return value
 }
@@ -148,7 +208,7 @@ onMounted(async () => {
       </div>
     </div>
 
-    <form class="form-card" @submit.prevent="save">
+    <form v-if="canCreate || editingId" class="form-card" @submit.prevent="save">
       <div class="section-title">
         <div>
           <h3>{{ editingId ? `Chỉnh sửa ${editingId}` : formTitle }}</h3>
@@ -156,16 +216,22 @@ onMounted(async () => {
         </div>
       </div>
       <div class="form-grid three">
-        <label v-for="field in fields" :key="field.key">
+        <label v-for="field in fields" :key="field.key" v-show="!field.hidden">
           {{ field.label }}
-          <select v-if="isSelect(field)" v-model="form[field.key]">
-            <option v-for="opt in optionsFor(field)" :key="opt.id" :value="opt.id">{{ opt.name }}</option>
+          <select
+            v-if="isSelect(field)"
+            v-model="form[field.key]"
+            :disabled="field.readOnly"
+          >
+            <option v-for="opt in optionsFor(field)" :key="opt.id" :value="opt.id">{{ optionLabel(field, opt) }}</option>
           </select>
           <input
             v-else
             v-model="form[field.key]"
             :type="field.type || 'text'"
             :placeholder="field.placeholder || field.label"
+            :readonly="field.readOnly"
+            :disabled="field.readOnly"
           />
         </label>
       </div>
@@ -177,28 +243,41 @@ onMounted(async () => {
       </div>
     </form>
 
+    <p v-if="!canCreate && !editingId && error" class="login-error">{{ error }}</p>
+    <p v-if="!canCreate && !editingId && message" class="login-success">{{ message }}</p>
+
     <section class="table-card">
       <div class="section-title">
         <div>
           <h3>Danh sách</h3>
           <p>Tổng hợp dữ liệu hiện tại trong hệ thống.</p>
         </div>
+        <button v-if="showRefresh" class="btn ghost compact" type="button" :disabled="loading" @click="refresh">Tải lại</button>
       </div>
       <div class="table-wrap">
         <table>
           <thead>
             <tr>
               <th v-for="column in columns" :key="column.key">{{ column.label }}</th>
-              <th>Thao tác</th>
+              <th v-if="showActionsCol">Thao tác</th>
             </tr>
           </thead>
           <tbody>
             <tr v-for="row in rows" :key="row.id">
               <td v-for="column in columns" :key="column.key">{{ display(row, column) }}</td>
-              <td>
+              <td v-if="showActionsCol">
                 <div class="inline-actions">
-                  <button class="btn secondary compact" type="button" @click="startEdit(row)">Sửa</button>
-                  <button class="btn danger compact" type="button" @click="removeRow(row)">Xóa</button>
+                  <template v-for="action in customActions" :key="action.label">
+                    <button
+                      v-if="isCustomActionVisible(action, row)"
+                      :class="['btn', action.variant || 'secondary', 'compact']"
+                      type="button"
+                      :disabled="loading"
+                      @click="runCustomAction(action, row)"
+                    >{{ action.label }}</button>
+                  </template>
+                  <button v-if="canEdit" class="btn secondary compact" type="button" @click="startEdit(row)">Sửa</button>
+                  <button v-if="canDelete" class="btn danger compact" type="button" @click="removeRow(row)">Xóa</button>
                 </div>
               </td>
             </tr>
