@@ -13,7 +13,6 @@ const fields = [
   { key: 'result', label: 'Kết quả', options: [
     { id: 'Âm tính', name: 'Âm tính' },
     { id: 'Dương tính', name: 'Dương tính' },
-    { id: 'Cần xét lại', name: 'Cần xét lại' },
   ], default: 'Âm tính' },
   { key: 'testedAt', label: 'Ngày xét nghiệm', type: 'datetime-local' },
   { key: 'staffId', label: 'Người thực hiện', optionsFrom: '/staff' },

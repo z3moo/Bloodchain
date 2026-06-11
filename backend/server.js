@@ -395,7 +395,7 @@ app.post('/api/donors', requireRole('admin', 'staff'), async (req, res) => {
     await pool.request()
       .input('MaNguoiHien', sql.VarChar(20), id)
       .input('NgaySinh', sql.Date, body.birthDate ? new Date(body.birthDate) : new Date('2000-01-01'))
-      .input('CCCD', sql.VarChar(20), body.cccd || `${Date.now()}`.slice(-12))
+      .input('CCCD', sql.VarChar(20), body.cccd || id)
       .input('SDT', sql.VarChar(15), body.phone || '')
       .input('DiemTichLuy', sql.Int, asInt(body.points, 0))
       .input('MaNhomMau', sql.VarChar(5), body.bloodGroup || 'O+')

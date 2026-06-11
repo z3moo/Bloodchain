@@ -5,7 +5,11 @@ const fields = [
   { key: 'donorId', label: 'Người hiến', optionsFrom: '/donors' },
   { key: 'campaignId', label: 'Chiến dịch', optionsFrom: '/campaigns' },
   { key: 'bloodGroup', label: 'Nhóm máu', optionsFrom: '/blood-groups', default: 'O+' },
-  { key: 'volume', label: 'Thể tích (ml)', type: 'number', default: 350 },
+  { key: 'volume', label: 'Thể tích (ml)', options: [
+    { id: 250, name: '250 ml' },
+    { id: 350, name: '350 ml' },
+    { id: 450, name: '450 ml' },
+  ], default: 350 },
   { key: 'staffId', label: 'Nhân viên thu nhận', optionsFrom: '/staff' },
   { key: 'testStatus', label: 'Trạng thái kiểm định', options: [
     { id: 'Chờ xét nghiệm', name: 'Chờ xét nghiệm' },

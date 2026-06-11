@@ -101,13 +101,15 @@ CREATE PROCEDURE sp_DangKyNguoiHien
 AS
 BEGIN
   -- @MatKhau da duoc bam bcrypt o tang backend truoc khi goi proc nay.
+  -- CCCD dat tam bang @MaNguoiHien (luon duy nhat) de khong vi pham rang buoc
+  -- UNIQUE tren CCCD; nguoi hien co the cap nhat CCCD that sau qua ho so.
   INSERT INTO NGUOI_HIEN
   VALUES (
     @MaNguoiHien,
     @HoTen,
     @NgaySinh,
     @GioiTinh,
-    NULL,
+    @MaNguoiHien,
     @SDT,
     NCHAR(75) + NCHAR(104) + NCHAR(244) + NCHAR(110) + NCHAR(103),
     0,
