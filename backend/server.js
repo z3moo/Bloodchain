@@ -400,7 +400,10 @@ app.post('/api/donors', requireRole('admin', 'staff'), async (req, res) => {
       .input('DiemTichLuy', sql.Int, asInt(body.points, 0))
       .input('MaNhomMau', sql.VarChar(5), body.bloodGroup || 'O+')
       .query(`INSERT INTO NGUOI_HIEN VALUES (@MaNguoiHien, ${nText(body.name || body.hoTen, T.newDonor)}, @NgaySinh, ${nText(body.gender, T.other)}, @CCCD, @SDT, ${nText(body.medicalHistory, T.no)}, @DiemTichLuy, ${nText(body.memberRank, T.bronze)}, @MaNhomMau)`)
-    res.status(201).json({ id, ...body })
+    // trg_UpdateHang derives HangThanhVien from DiemTichLuy, so report the
+    // stored rank rather than whatever the client sent.
+    const stored = await pool.request().input('MaNguoiHien', sql.VarChar(20), id).query('SELECT DiemTichLuy AS points, HangThanhVien AS memberRank FROM NGUOI_HIEN WHERE MaNguoiHien = @MaNguoiHien')
+    res.status(201).json({ id, ...body, ...(stored.recordset[0] || {}) })
   } catch (error) { safeError(res, error) }
 })
 app.put('/api/donors/:id', requireRole('admin', 'staff'), async (req, res) => {
@@ -417,7 +420,9 @@ app.put('/api/donors/:id', requireRole('admin', 'staff'), async (req, res) => {
       HangThanhVien: { raw: nText(body.memberRank, T.bronze) },
       MaNhomMau: { type: sql.VarChar(5), value: body.bloodGroup || 'O+' },
     })
-    res.json({ id: req.params.id, ...body })
+    // trg_UpdateHang may overwrite HangThanhVien from DiemTichLuy; report stored.
+    const stored = await pool.request().input('MaNguoiHien', sql.VarChar(20), req.params.id).query('SELECT DiemTichLuy AS points, HangThanhVien AS memberRank FROM NGUOI_HIEN WHERE MaNguoiHien = @MaNguoiHien')
+    res.json({ id: req.params.id, ...body, ...(stored.recordset[0] || {}) })
   } catch (error) { safeError(res, error) }
 })
 app.delete('/api/donors/:id', requireRole('admin', 'staff'), async (req, res) => {
@@ -672,10 +677,6 @@ app.get('/api/blood-bags', async (_req, res) => {
   try { const pool = await getPool(); const result = await pool.request().query('SELECT MaGoiMau AS id, NgayHien AS donatedAt, TheTich AS volume, TrangThaiKiemDinh AS testStatus, MaNguoiHien AS donorId, MaNhomMau AS bloodGroup, MaChienDich AS campaignId, MaNV_ThuNhan AS staffId FROM GOI_MAU_TOAN_PHAN ORDER BY MaGoiMau'); res.json(result.recordset) }
   catch (error) { safeError(res, error) }
 })
-// Reward per successful donation. Cheap rule of thumb for the lab demo;
-// real systems weigh by volume and component, but DETAILS.md doesn't model that.
-const POINTS_PER_DONATION = 50
-
 app.post('/api/blood-bags', requireRole('admin', 'staff'), async (req, res) => {
   const body = req.body || {}
   try {
@@ -684,10 +685,10 @@ app.post('/api/blood-bags', requireRole('admin', 'staff'), async (req, res) => {
     const campaignId = body.campaignId || await firstValue(pool, 'SELECT TOP 1 MaChienDich AS value FROM CHIEN_DICH ORDER BY MaChienDich', 'CD001')
     const staffId = body.staffId || await firstValue(pool, 'SELECT TOP 1 MaNV AS value FROM NHAN_VIEN ORDER BY MaNV', 'NV001')
     await pool.request().input('MaGoiMau', sql.VarChar(20), id).input('NgayHien', sql.DateTime, asDateTime(body.donatedAt)).input('TheTich', sql.Int, asInt(body.volume, 350)).input('MaNguoiHien', sql.VarChar(20), donorId).input('MaNhomMau', sql.VarChar(5), body.bloodGroup || 'O+').input('MaChienDich', sql.VarChar(20), campaignId).input('MaNV_ThuNhan', sql.VarChar(20), staffId).query(`INSERT INTO GOI_MAU_TOAN_PHAN VALUES (@MaGoiMau, @NgayHien, @TheTich, ${nText(body.testStatus, T.waitingTest)}, @MaNguoiHien, @MaNhomMau, @MaChienDich, @MaNV_ThuNhan)`)
-    // Auto-update derived fields. Best-effort; FK constraints already enforce
-    // that donorId/campaignId exist by the time we reach here.
+    // Bump the campaign's realised count. Donor points + member rank are owned
+    // by the DB (trg_CongDiem on INSERT, trg_UpdateHang recomputes the rank),
+    // so the backend no longer touches DiemTichLuy here.
     await pool.request().input('MaChienDich', sql.VarChar(20), campaignId).query('UPDATE CHIEN_DICH SET SoLuongThucTe = ISNULL(SoLuongThucTe, 0) + 1 WHERE MaChienDich = @MaChienDich')
-    await pool.request().input('MaNguoiHien', sql.VarChar(20), donorId).input('Diem', sql.Int, POINTS_PER_DONATION).query('UPDATE NGUOI_HIEN SET DiemTichLuy = ISNULL(DiemTichLuy, 0) + @Diem WHERE MaNguoiHien = @MaNguoiHien')
     res.status(201).json({ id, ...body, donorId, campaignId, staffId })
   } catch (error) { safeError(res, error) }
 })
@@ -710,18 +711,16 @@ app.put('/api/blood-bags/:id', requireRole('admin', 'staff'), async (req, res) =
 app.delete('/api/blood-bags/:id', requireRole('admin', 'staff'), async (req, res) => {
   try {
     const pool = await getPool()
-    // Reverse the derived counters before deleting; if the bag isn't there
+    // Reverse the campaign counter before deleting; if the bag isn't there
     // the SELECT just returns no rows and we still return 204 with safeError
-    // catching FK conflicts.
+    // catching FK conflicts. Donor points are reversed by trg_TruDiem (DELETE
+    // trigger), so the backend only handles the campaign count here.
     const meta = await pool.request().input('MaGoiMau', sql.VarChar(20), req.params.id).query('SELECT MaChienDich, MaNguoiHien FROM GOI_MAU_TOAN_PHAN WHERE MaGoiMau = @MaGoiMau')
     await deleteRow(pool, 'GOI_MAU_TOAN_PHAN', 'MaGoiMau', req.params.id)
     if (meta.recordset.length) {
-      const { MaChienDich, MaNguoiHien } = meta.recordset[0]
+      const { MaChienDich } = meta.recordset[0]
       if (MaChienDich) {
         await pool.request().input('MaChienDich', sql.VarChar(20), MaChienDich).query('UPDATE CHIEN_DICH SET SoLuongThucTe = CASE WHEN ISNULL(SoLuongThucTe, 0) > 0 THEN SoLuongThucTe - 1 ELSE 0 END WHERE MaChienDich = @MaChienDich')
-      }
-      if (MaNguoiHien) {
-        await pool.request().input('MaNguoiHien', sql.VarChar(20), MaNguoiHien).input('Diem', sql.Int, POINTS_PER_DONATION).query('UPDATE NGUOI_HIEN SET DiemTichLuy = CASE WHEN ISNULL(DiemTichLuy, 0) > @Diem THEN DiemTichLuy - @Diem ELSE 0 END WHERE MaNguoiHien = @MaNguoiHien')
       }
     }
     res.status(204).end()
@@ -802,7 +801,11 @@ app.post('/api/components', requireRole('admin', 'staff'), async (req, res) => {
       expiresAt = defaultExpiry(body.type, bagDate)
     }
     await pool.request().input('MaThanhPhan', sql.VarChar(20), id).input('TheTichThucTe', sql.Int, asInt(body.volume, 250)).input('HanSuDung', sql.Date, expiresAt).input('MaGoiMau', sql.VarChar(20), bloodBagId).input('MaViTri', sql.VarChar(20), storageId).query(`INSERT INTO THANH_PHAN_MAU VALUES (@MaThanhPhan, ${nText(body.type, T.redCells)}, @TheTichThucTe, @HanSuDung, ${nText(body.status, T.ready)}, @MaGoiMau, @MaViTri)`)
-    res.status(201).json({ id, ...body, bloodBagId, storageId, expiresAt })
+    // trg_SetHanSuDung recomputes HanSuDung from component type + NgayHien, so
+    // read the stored value back instead of echoing the inserted guess.
+    const stored = await pool.request().input('MaThanhPhan', sql.VarChar(20), id).query('SELECT HanSuDung FROM THANH_PHAN_MAU WHERE MaThanhPhan = @MaThanhPhan')
+    const finalExpiry = stored.recordset[0]?.HanSuDung ?? expiresAt
+    res.status(201).json({ id, ...body, bloodBagId, storageId, expiresAt: finalExpiry })
   } catch (error) { safeError(res, error) }
 })
 app.put('/api/components/:id', requireRole('admin', 'staff'), async (req, res) => {
@@ -828,7 +831,10 @@ app.put('/api/components/:id', requireRole('admin', 'staff'), async (req, res) =
       MaGoiMau: { type: sql.VarChar(20), value: targetBag },
       MaViTri: { type: sql.VarChar(20), value: body.storageId || 'VT001' },
     })
-    res.json({ id: req.params.id, ...body, expiresAt })
+    // trg_SetHanSuDung may overwrite HanSuDung on UPDATE; report the stored value.
+    const stored = await pool.request().input('MaThanhPhan', sql.VarChar(20), req.params.id).query('SELECT HanSuDung FROM THANH_PHAN_MAU WHERE MaThanhPhan = @MaThanhPhan')
+    const finalExpiry = stored.recordset[0]?.HanSuDung ?? expiresAt
+    res.json({ id: req.params.id, ...body, expiresAt: finalExpiry })
   } catch (error) { safeError(res, error) }
 })
 app.delete('/api/components/:id', requireRole('admin', 'staff'), async (req, res) => {
@@ -1032,9 +1038,10 @@ app.post('/api/exports', requireRole('admin', 'staff'), async (req, res) => {
       return res.status(400).json({ message: `Vượt quá thể tích yêu cầu (${requestRow.SoLuongML} ml).` })
     }
 
-    // All three writes either commit together or roll back together so a
-    // failure between INSERT detail and the status flip can't leave a
-    // half-issued component as still "Sẵn sàng".
+    // The detail INSERT and the request both live in one transaction so a
+    // failure can't leave a half-issued export. The component's status flip to
+    // "Đã xuất" is owned by trg_UpdateTrangThaiSauXuat (AFTER INSERT on
+    // CHI_TIET_XUAT), which runs in this same transaction.
     const tx = new sql.Transaction(pool)
     await tx.begin()
     try {
@@ -1049,9 +1056,6 @@ app.post('/api/exports', requireRole('admin', 'staff'), async (req, res) => {
         .input('MaPhieuXuat', sql.VarChar(20), id)
         .input('MaThanhPhan', sql.VarChar(20), componentId)
         .query(`INSERT INTO CHI_TIET_XUAT VALUES (@MaPhieuXuat, @MaThanhPhan, ${nText(crossMatch, T.compatible)})`)
-      await new sql.Request(tx)
-        .input('MaThanhPhan', sql.VarChar(20), componentId)
-        .query(`UPDATE THANH_PHAN_MAU SET TrangThai = ${nText(T.exported)} WHERE MaThanhPhan = @MaThanhPhan`)
       await tx.commit()
     } catch (err) {
       await tx.rollback().catch(() => {})
@@ -1101,6 +1105,26 @@ app.get('/api/reports/expiring', async (_req, res) => {
 app.get('/api/reports/campaigns', async (_req, res) => {
   try { const pool = await getPool(); const result = await pool.request().query('SELECT MaChienDich AS id, TenChienDich AS name, SoLuongDuKien AS expected, SoLuongThucTe AS actual FROM CHIEN_DICH ORDER BY MaChienDich'); res.json(result.recordset) }
   catch (error) { safeError(res, error) }
+})
+// So luong tui mau tiep nhan theo ngay (cho bieu do cot o Dashboard).
+// Mac dinh 14 ngay gan nhat; tra ve ca so tui (bags) va tong the tich (volume).
+app.get('/api/reports/intake-by-day', async (req, res) => {
+  try {
+    const pool = await getPool()
+    const days = Math.min(Math.max(parseInt(req.query.days, 10) || 14, 1), 90)
+    const result = await pool.request()
+      .input('days', sql.Int, days)
+      .query(`
+        SELECT CONVERT(varchar(10), CAST(NgayHien AS DATE), 23) AS day,
+               COUNT(*) AS bags,
+               ISNULL(SUM(TheTich), 0) AS volume
+        FROM GOI_MAU_TOAN_PHAN
+        WHERE NgayHien >= DATEADD(day, -(@days - 1), CAST(GETDATE() AS DATE))
+        GROUP BY CAST(NgayHien AS DATE)
+        ORDER BY CAST(NgayHien AS DATE)
+      `)
+    res.json(result.recordset)
+  } catch (error) { safeError(res, error) }
 })
 
 app.listen(port, () => {

@@ -9,6 +9,27 @@
   - FOREIGN KEY: khoa ngoai, lien ket sang bang khac
 */
 
+IF OBJECT_ID('dbo.vw_XuatKhoChiTiet', 'V') IS NOT NULL DROP VIEW dbo.vw_XuatKhoChiTiet;
+IF OBJECT_ID('dbo.vw_PhieuYeuCauChiTiet', 'V') IS NOT NULL DROP VIEW dbo.vw_PhieuYeuCauChiTiet;
+IF OBJECT_ID('dbo.vw_MauSapHetHan', 'V') IS NOT NULL DROP VIEW dbo.vw_MauSapHetHan;
+IF OBJECT_ID('dbo.vw_TonKhoMau', 'V') IS NOT NULL DROP VIEW dbo.vw_TonKhoMau;
+GO
+
+IF OBJECT_ID('dbo.trg_UpdateHang', 'TR') IS NOT NULL DROP TRIGGER dbo.trg_UpdateHang;
+IF OBJECT_ID('dbo.trg_TruDiem', 'TR') IS NOT NULL DROP TRIGGER dbo.trg_TruDiem;
+IF OBJECT_ID('dbo.trg_CongDiem', 'TR') IS NOT NULL DROP TRIGGER dbo.trg_CongDiem;
+IF OBJECT_ID('dbo.trg_UpdateTrangThaiSauXuat', 'TR') IS NOT NULL DROP TRIGGER dbo.trg_UpdateTrangThaiSauXuat;
+IF OBJECT_ID('dbo.trg_Check_XuatMau', 'TR') IS NOT NULL DROP TRIGGER dbo.trg_Check_XuatMau;
+IF OBJECT_ID('dbo.trg_SetHanSuDung', 'TR') IS NOT NULL DROP TRIGGER dbo.trg_SetHanSuDung;
+IF OBJECT_ID('dbo.trg_Check_TachChiet', 'TR') IS NOT NULL DROP TRIGGER dbo.trg_Check_TachChiet;
+GO
+
+IF OBJECT_ID('dbo.fn_KiemTraThanhPhanKhaDung', 'FN') IS NOT NULL DROP FUNCTION dbo.fn_KiemTraThanhPhanKhaDung;
+IF OBJECT_ID('dbo.fn_XepHangThanhVien', 'FN') IS NOT NULL DROP FUNCTION dbo.fn_XepHangThanhVien;
+IF OBJECT_ID('dbo.fn_DiemCongTheoTheTich', 'FN') IS NOT NULL DROP FUNCTION dbo.fn_DiemCongTheoTheTich;
+IF OBJECT_ID('dbo.fn_SoNgayConLai', 'FN') IS NOT NULL DROP FUNCTION dbo.fn_SoNgayConLai;
+GO
+
 IF OBJECT_ID('dbo.CHI_TIET_XUAT', 'U') IS NOT NULL DROP TABLE dbo.CHI_TIET_XUAT;
 IF OBJECT_ID('dbo.PHIEU_XUAT', 'U') IS NOT NULL DROP TABLE dbo.PHIEU_XUAT;
 IF OBJECT_ID('dbo.PHIEU_YEU_CAU', 'U') IS NOT NULL DROP TABLE dbo.PHIEU_YEU_CAU;
@@ -83,6 +104,13 @@ CREATE TABLE QUY_DOI_DIEM (
 );
 GO
 
+CREATE TABLE VI_TRI_KHO (
+  MaViTri VARCHAR(20) PRIMARY KEY,
+  TenTu NVARCHAR(50),
+  Ngan INT
+);
+GO
+
 CREATE TABLE DANG_KY_CHIEN_DICH (
   MaChienDich VARCHAR(20),
   MaNguoiHien VARCHAR(20),
@@ -90,13 +118,6 @@ CREATE TABLE DANG_KY_CHIEN_DICH (
   PRIMARY KEY (MaChienDich, MaNguoiHien),
   FOREIGN KEY (MaChienDich) REFERENCES CHIEN_DICH(MaChienDich),
   FOREIGN KEY (MaNguoiHien) REFERENCES NGUOI_HIEN(MaNguoiHien)
-);
-GO
-
-CREATE TABLE VI_TRI_KHO (
-  MaViTri VARCHAR(20) PRIMARY KEY,
-  TenTu NVARCHAR(50),
-  Ngan INT
 );
 GO
 
@@ -244,7 +265,7 @@ INSERT INTO KET_QUA_XET_NGHIEM VALUES ('XN001', N'HIV', NCHAR(194) + NCHAR(109) 
 INSERT INTO KET_QUA_XET_NGHIEM VALUES ('XN002', NCHAR(86) + NCHAR(105) + NCHAR(234) + NCHAR(109) + NCHAR(32) + NCHAR(103) + NCHAR(97) + NCHAR(110) + NCHAR(32) + NCHAR(66), NCHAR(194) + NCHAR(109) + NCHAR(32) + NCHAR(116) + NCHAR(237) + NCHAR(110) + NCHAR(104), '2026-02-15 13:45:00', 'GM001', 'NV002');
 GO
 
-INSERT INTO THANH_PHAN_MAU VALUES ('TP001', NCHAR(72) + NCHAR(7891) + NCHAR(110) + NCHAR(103) + NCHAR(32) + NCHAR(99) + NCHAR(7847) + NCHAR(117), 250, '2026-03-22', NCHAR(83) + NCHAR(7861) + NCHAR(110) + NCHAR(32) + NCHAR(115) + NCHAR(224) + NCHAR(110) + NCHAR(103), 'GM001', 'VT001');
+INSERT INTO THANH_PHAN_MAU VALUES ('TP001', NCHAR(72) + NCHAR(7891) + NCHAR(110) + NCHAR(103) + NCHAR(32) + NCHAR(99) + NCHAR(7847) + NCHAR(117), 250, '2026-03-22', NCHAR(272) + NCHAR(227) + NCHAR(32) + NCHAR(120) + NCHAR(117) + NCHAR(7845) + NCHAR(116), 'GM001', 'VT001');
 INSERT INTO THANH_PHAN_MAU VALUES ('TP002', NCHAR(72) + NCHAR(117) + NCHAR(121) + NCHAR(7871) + NCHAR(116) + NCHAR(32) + NCHAR(116) + NCHAR(432) + NCHAR(417) + NCHAR(110) + NCHAR(103), 100, '2026-08-15', NCHAR(83) + NCHAR(7861) + NCHAR(110) + NCHAR(32) + NCHAR(115) + NCHAR(224) + NCHAR(110) + NCHAR(103), 'GM001', 'VT002');
 GO
 
@@ -258,4 +279,330 @@ INSERT INTO PHIEU_XUAT VALUES ('PX001', '2026-02-20 10:00:00', 50, 'YC001', 'NV0
 GO
 
 INSERT INTO CHI_TIET_XUAT VALUES ('PX001', 'TP001', NCHAR(72) + NCHAR(242) + NCHAR(97) + NCHAR(32) + NCHAR(104) + NCHAR(7907) + NCHAR(112));
+GO
+
+CREATE FUNCTION fn_SoNgayConLai (@HanSuDung DATE)
+RETURNS INT
+AS
+BEGIN
+  RETURN DATEDIFF(day, CAST(GETDATE() AS DATE), @HanSuDung);
+END;
+GO
+
+CREATE FUNCTION fn_DiemCongTheoTheTich (@TheTich INT)
+RETURNS INT
+AS
+BEGIN
+  RETURN CASE @TheTich
+    WHEN 250 THEN 50
+    WHEN 350 THEN 70
+    WHEN 450 THEN 100
+    ELSE 0
+  END;
+END;
+GO
+
+CREATE FUNCTION fn_XepHangThanhVien (@DiemTichLuy INT)
+RETURNS NVARCHAR(20)
+AS
+BEGIN
+  RETURN CASE
+    WHEN ISNULL(@DiemTichLuy, 0) >= 200 THEN NCHAR(86) + NCHAR(224) + NCHAR(110) + NCHAR(103)
+    WHEN ISNULL(@DiemTichLuy, 0) >= 100 THEN NCHAR(66) + NCHAR(7841) + NCHAR(99)
+    ELSE NCHAR(272) + NCHAR(7891) + NCHAR(110) + NCHAR(103)
+  END;
+END;
+GO
+
+CREATE FUNCTION fn_KiemTraThanhPhanKhaDung (@MaThanhPhan VARCHAR(20))
+RETURNS BIT
+AS
+BEGIN
+  DECLARE @HopLe BIT = 0;
+
+  IF EXISTS (
+    SELECT 1
+    FROM THANH_PHAN_MAU tp
+    WHERE tp.MaThanhPhan = @MaThanhPhan
+      AND tp.TrangThai = NCHAR(83) + NCHAR(7861) + NCHAR(110) + NCHAR(32) + NCHAR(115) + NCHAR(224) + NCHAR(110) + NCHAR(103)
+      AND tp.HanSuDung >= CAST(GETDATE() AS DATE)
+      AND NOT EXISTS (
+        SELECT 1
+        FROM CHI_TIET_XUAT ctx
+        WHERE ctx.MaThanhPhan = tp.MaThanhPhan
+      )
+  )
+  BEGIN
+    SET @HopLe = 1;
+  END
+
+  RETURN @HopLe;
+END;
+GO
+
+CREATE VIEW vw_TonKhoMau AS
+SELECT
+  g.MaNhomMau AS bloodGroup,
+  g.TenNhomMau AS bloodGroupName,
+  SUM(CASE WHEN tp.MaThanhPhan IS NOT NULL AND CHARINDEX(NCHAR(72) + NCHAR(7891) + NCHAR(110) + NCHAR(103) + NCHAR(32) + NCHAR(99) + NCHAR(7847) + NCHAR(117), tp.LoaiThanhPhan) > 0 THEN 1 ELSE 0 END) AS redCells,
+  SUM(CASE WHEN tp.MaThanhPhan IS NOT NULL AND CHARINDEX(NCHAR(72) + NCHAR(117) + NCHAR(121) + NCHAR(7871) + NCHAR(116), tp.LoaiThanhPhan) > 0 THEN 1 ELSE 0 END) AS plasma,
+  SUM(CASE WHEN tp.MaThanhPhan IS NOT NULL AND CHARINDEX(NCHAR(84) + NCHAR(105) + NCHAR(7875) + NCHAR(117), tp.LoaiThanhPhan) > 0 THEN 1 ELSE 0 END) AS platelets,
+  COUNT(tp.MaThanhPhan) AS total,
+  ISNULL(SUM(tp.TheTichThucTe), 0) AS totalVolume
+FROM NHOM_MAU g
+LEFT JOIN GOI_MAU_TOAN_PHAN gm ON gm.MaNhomMau = g.MaNhomMau
+LEFT JOIN THANH_PHAN_MAU tp
+  ON tp.MaGoiMau = gm.MaGoiMau
+  AND dbo.fn_KiemTraThanhPhanKhaDung(tp.MaThanhPhan) = 1
+GROUP BY g.MaNhomMau, g.TenNhomMau;
+GO
+
+CREATE VIEW vw_MauSapHetHan AS
+SELECT
+  tp.MaThanhPhan AS id,
+  tp.LoaiThanhPhan AS type,
+  tp.TheTichThucTe AS volume,
+  tp.HanSuDung AS expiresAt,
+  dbo.fn_SoNgayConLai(tp.HanSuDung) AS daysLeft,
+  tp.TrangThai AS status,
+  gm.MaGoiMau AS bloodBagId,
+  gm.MaNhomMau AS bloodGroup,
+  nh.MaNguoiHien AS donorId,
+  nh.HoTen AS donorName,
+  vt.MaViTri AS storageId,
+  vt.TenTu + N' - Ngan ' + CAST(vt.Ngan AS NVARCHAR(10)) AS storageName
+FROM THANH_PHAN_MAU tp
+JOIN GOI_MAU_TOAN_PHAN gm ON gm.MaGoiMau = tp.MaGoiMau
+LEFT JOIN NGUOI_HIEN nh ON nh.MaNguoiHien = gm.MaNguoiHien
+LEFT JOIN VI_TRI_KHO vt ON vt.MaViTri = tp.MaViTri
+WHERE dbo.fn_SoNgayConLai(tp.HanSuDung) <= 30
+  AND tp.TrangThai <> NCHAR(272) + NCHAR(227) + NCHAR(32) + NCHAR(120) + NCHAR(117) + NCHAR(7845) + NCHAR(116)
+  AND NOT EXISTS (
+    SELECT 1
+    FROM CHI_TIET_XUAT ctx
+    WHERE ctx.MaThanhPhan = tp.MaThanhPhan
+  );
+GO
+
+CREATE VIEW vw_PhieuYeuCauChiTiet AS
+SELECT
+  yc.MaPhieuYC AS id,
+  yc.NgayYeuCau AS requestedAt,
+  yc.LoaiThanhPhanCan AS componentType,
+  yc.SoLuongML AS volume,
+  yc.TrangThaiDuyet AS status,
+  yc.MaBV AS hospitalId,
+  bv.TenBV AS hospitalName,
+  yc.MaBenhNhan AS patientId,
+  bn.HoTen AS patientName,
+  yc.MaNhomMau AS bloodGroup,
+  yc.MaNV_Duyet AS approverId,
+  nv.HoTen AS approverName
+FROM PHIEU_YEU_CAU yc
+LEFT JOIN BENH_VIEN bv ON bv.MaBV = yc.MaBV
+LEFT JOIN BENH_NHAN bn ON bn.MaBenhNhan = yc.MaBenhNhan
+LEFT JOIN NHAN_VIEN nv ON nv.MaNV = yc.MaNV_Duyet;
+GO
+
+CREATE VIEW vw_XuatKhoChiTiet AS
+SELECT
+  px.MaPhieuXuat AS id,
+  px.NgayXuat AS exportedAt,
+  px.TongTheTich AS totalVolume,
+  px.MaPhieuYC AS requestId,
+  yc.MaBV AS hospitalId,
+  bv.TenBV AS hospitalName,
+  yc.MaBenhNhan AS patientId,
+  bn.HoTen AS patientName,
+  yc.MaNhomMau AS bloodGroup,
+  px.MaNV_Xuat AS staffId,
+  nv.HoTen AS staffName,
+  STUFF((
+    SELECT ', ' + ctx2.MaThanhPhan
+    FROM CHI_TIET_XUAT ctx2
+    WHERE ctx2.MaPhieuXuat = px.MaPhieuXuat
+    FOR XML PATH(''), TYPE
+  ).value('.', 'NVARCHAR(MAX)'), 1, 2, '') AS componentId,
+  STUFF((
+    SELECT ', ' + tp2.LoaiThanhPhan
+    FROM CHI_TIET_XUAT ctx2
+    JOIN THANH_PHAN_MAU tp2 ON tp2.MaThanhPhan = ctx2.MaThanhPhan
+    WHERE ctx2.MaPhieuXuat = px.MaPhieuXuat
+    FOR XML PATH(''), TYPE
+  ).value('.', 'NVARCHAR(MAX)'), 1, 2, '') AS componentType,
+  (
+    SELECT TOP 1 ctx3.KetQuaPhanUngCheo
+    FROM CHI_TIET_XUAT ctx3
+    WHERE ctx3.MaPhieuXuat = px.MaPhieuXuat
+    ORDER BY ctx3.MaThanhPhan
+  ) AS crossMatch
+FROM PHIEU_XUAT px
+LEFT JOIN PHIEU_YEU_CAU yc ON yc.MaPhieuYC = px.MaPhieuYC
+LEFT JOIN BENH_VIEN bv ON bv.MaBV = yc.MaBV
+LEFT JOIN BENH_NHAN bn ON bn.MaBenhNhan = yc.MaBenhNhan
+LEFT JOIN NHAN_VIEN nv ON nv.MaNV = px.MaNV_Xuat;
+GO
+
+CREATE TRIGGER trg_Check_TachChiet
+ON THANH_PHAN_MAU
+AFTER INSERT, UPDATE
+AS
+BEGIN
+  SET NOCOUNT ON;
+
+  IF EXISTS (
+    SELECT 1
+    FROM inserted i
+    JOIN GOI_MAU_TOAN_PHAN gm ON gm.MaGoiMau = i.MaGoiMau
+    WHERE gm.TrangThaiKiemDinh <> NCHAR(272) + NCHAR(7841) + NCHAR(116)
+       OR EXISTS (
+        SELECT 1
+        FROM KET_QUA_XET_NGHIEM xn
+        WHERE xn.MaGoiMau = i.MaGoiMau
+          AND xn.KetQua = NCHAR(68) + NCHAR(432) + NCHAR(417) + NCHAR(110) + NCHAR(103) + NCHAR(32) + NCHAR(116) + NCHAR(237) + NCHAR(110) + NCHAR(104)
+      )
+  )
+  BEGIN
+    ROLLBACK TRANSACTION;
+    THROW 50001, 'Goi mau khong phu hop de tach.', 1;
+  END
+END;
+GO
+
+CREATE TRIGGER trg_SetHanSuDung
+ON THANH_PHAN_MAU
+AFTER INSERT, UPDATE
+AS
+BEGIN
+  SET NOCOUNT ON;
+
+  IF TRIGGER_NESTLEVEL() > 1 RETURN;
+
+  UPDATE tp
+  SET HanSuDung =
+    CASE
+      WHEN CHARINDEX(NCHAR(72) + NCHAR(7891) + NCHAR(110) + NCHAR(103) + NCHAR(32) + NCHAR(99) + NCHAR(7847) + NCHAR(117), i.LoaiThanhPhan) > 0
+        THEN DATEADD(day, 35, CAST(gm.NgayHien AS DATE))
+      WHEN CHARINDEX(NCHAR(84) + NCHAR(105) + NCHAR(7875) + NCHAR(117), i.LoaiThanhPhan) > 0
+        THEN DATEADD(day, 10, CAST(gm.NgayHien AS DATE))
+      WHEN CHARINDEX(NCHAR(72) + NCHAR(117) + NCHAR(121) + NCHAR(7871) + NCHAR(116), i.LoaiThanhPhan) > 0
+        THEN DATEADD(day, 365, CAST(gm.NgayHien AS DATE))
+      ELSE tp.HanSuDung
+    END
+  FROM THANH_PHAN_MAU tp
+  JOIN inserted i ON i.MaThanhPhan = tp.MaThanhPhan
+  JOIN GOI_MAU_TOAN_PHAN gm ON gm.MaGoiMau = i.MaGoiMau;
+END;
+GO
+
+CREATE TRIGGER trg_Check_XuatMau
+ON CHI_TIET_XUAT
+INSTEAD OF INSERT
+AS
+BEGIN
+  SET NOCOUNT ON;
+
+  IF EXISTS (
+    SELECT 1
+    FROM inserted i
+    WHERE dbo.fn_KiemTraThanhPhanKhaDung(i.MaThanhPhan) = 0
+  )
+  BEGIN
+    ROLLBACK TRANSACTION;
+    THROW 50002, 'Thanh phan mau khong san sang hoac da het han.', 1;
+  END
+
+  IF EXISTS (
+    SELECT 1
+    FROM inserted
+    GROUP BY MaThanhPhan
+    HAVING COUNT(*) > 1
+  )
+  BEGIN
+    ROLLBACK TRANSACTION;
+    THROW 50003, 'Mot thanh phan mau khong the xuat nhieu lan trong cung mot lan ghi.', 1;
+  END
+
+  INSERT INTO CHI_TIET_XUAT (MaPhieuXuat, MaThanhPhan, KetQuaPhanUngCheo)
+  SELECT MaPhieuXuat, MaThanhPhan, KetQuaPhanUngCheo
+  FROM inserted;
+END;
+GO
+
+CREATE TRIGGER trg_UpdateTrangThaiSauXuat
+ON CHI_TIET_XUAT
+AFTER INSERT
+AS
+BEGIN
+  SET NOCOUNT ON;
+
+  UPDATE tp
+  SET TrangThai = NCHAR(272) + NCHAR(227) + NCHAR(32) + NCHAR(120) + NCHAR(117) + NCHAR(7845) + NCHAR(116)
+  FROM THANH_PHAN_MAU tp
+  JOIN inserted i ON i.MaThanhPhan = tp.MaThanhPhan;
+END;
+GO
+
+CREATE TRIGGER trg_CongDiem
+ON GOI_MAU_TOAN_PHAN
+AFTER INSERT
+AS
+BEGIN
+  SET NOCOUNT ON;
+
+  UPDATE nh
+  SET DiemTichLuy = ISNULL(nh.DiemTichLuy, 0) + diem.DiemCong
+  FROM NGUOI_HIEN nh
+  JOIN (
+    SELECT
+      MaNguoiHien,
+      SUM(dbo.fn_DiemCongTheoTheTich(TheTich)) AS DiemCong
+    FROM inserted
+    WHERE MaNguoiHien IS NOT NULL
+    GROUP BY MaNguoiHien
+  ) diem ON diem.MaNguoiHien = nh.MaNguoiHien;
+END;
+GO
+
+CREATE TRIGGER trg_TruDiem
+ON GOI_MAU_TOAN_PHAN
+AFTER DELETE
+AS
+BEGIN
+  SET NOCOUNT ON;
+
+  -- Doi xung voi trg_CongDiem: khi xoa goi mau, tru lai dung so diem da cong
+  -- (theo the tich), khong cho am. trg_UpdateHang se tu tinh lai hang.
+  UPDATE nh
+  SET DiemTichLuy =
+    CASE
+      WHEN ISNULL(nh.DiemTichLuy, 0) > diem.DiemTru THEN nh.DiemTichLuy - diem.DiemTru
+      ELSE 0
+    END
+  FROM NGUOI_HIEN nh
+  JOIN (
+    SELECT
+      MaNguoiHien,
+      SUM(dbo.fn_DiemCongTheoTheTich(TheTich)) AS DiemTru
+    FROM deleted
+    WHERE MaNguoiHien IS NOT NULL
+    GROUP BY MaNguoiHien
+  ) diem ON diem.MaNguoiHien = nh.MaNguoiHien;
+END;
+GO
+
+CREATE TRIGGER trg_UpdateHang
+ON NGUOI_HIEN
+AFTER INSERT, UPDATE
+AS
+BEGIN
+  SET NOCOUNT ON;
+
+  IF NOT UPDATE(DiemTichLuy) RETURN;
+
+  UPDATE nh
+  SET HangThanhVien = dbo.fn_XepHangThanhVien(nh.DiemTichLuy)
+  FROM NGUOI_HIEN nh
+  JOIN inserted i ON i.MaNguoiHien = nh.MaNguoiHien;
+END;
 GO

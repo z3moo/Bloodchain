@@ -59,6 +59,7 @@ export const api = {
     inventory: () => request('/reports/inventory'),
     expiring: () => request('/reports/expiring'),
     campaigns: () => request('/reports/campaigns'),
+    intakeByDay: (days = 14) => request(`/reports/intake-by-day?days=${days}`),
   },
   me: {
     profile: () => request('/donors/me'),

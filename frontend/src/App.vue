@@ -18,6 +18,11 @@ import MyDonations from './views/MyDonations.vue'
 import DonorCampaigns from './views/DonorCampaigns.vue'
 import MyPoints from './views/MyPoints.vue'
 import DonorData from './views/DonorData.vue'
+import {
+  LayoutDashboard, Building2, UserRound, Droplet, CalendarHeart, Award,
+  Users, Database, Megaphone, FlaskConical, Boxes, BedDouble,
+  ClipboardList, Truck, BarChart3, ShieldCheck,
+} from 'lucide-vue-next'
 import { api } from './api'
 
 const SESSION_STORAGE_KEY = 'bloodchain.currentUser'
@@ -26,24 +31,24 @@ const SESSION_STORAGE_KEY = 'bloodchain.currentUser'
 // becomes the post-login landing page. Hospital lands on hospital-dashboard,
 // donor lands on my-profile, admin/staff land on dashboard.
 const modules = [
-  { key: 'dashboard', label: 'Tổng quan', component: Dashboard, group: 'Điều hành', access: ['admin', 'staff'] },
-  { key: 'hospital-dashboard', label: 'Tổng quan bệnh viện', component: HospitalDashboard, group: 'Điều hành', access: ['hospital'] },
-  { key: 'my-profile', label: 'Hồ sơ của tôi', component: MyProfile, group: 'Người hiến', access: ['donor'] },
-  { key: 'my-donations', label: 'Lịch sử hiến máu', component: MyDonations, group: 'Người hiến', access: ['donor'] },
-  { key: 'donor-campaigns', label: 'Chiến dịch sắp tới', component: DonorCampaigns, group: 'Người hiến', access: ['donor'] },
-  { key: 'my-points', label: 'Điểm thưởng', component: MyPoints, group: 'Người hiến', access: ['donor'] },
-  { key: 'donors', label: 'Người hiến máu', component: Donors, group: 'Người hiến', access: ['admin', 'staff'] },
-  { key: 'donor-data', label: 'Dữ liệu người hiến', component: DonorData, group: 'Người hiến', access: ['admin', 'staff'] },
-  { key: 'campaigns', label: 'Chiến dịch', component: Campaigns, group: 'Tiếp nhận', access: ['admin', 'staff'] },
-  { key: 'blood-bags', label: 'Gói máu', component: BloodBags, group: 'Tiếp nhận', access: ['admin', 'staff'] },
-  { key: 'lab-tests', label: 'Xét nghiệm', component: LabTests, group: 'Y khoa', access: ['admin', 'staff'] },
-  { key: 'components', label: 'Kho máu', component: Components, group: 'Kho', access: ['admin', 'staff'] },
-  { key: 'hospitals', label: 'Bệnh viện', component: Hospitals, group: 'Cung ứng', access: ['admin', 'staff'] },
-  { key: 'patients', label: 'Bệnh nhân', component: Patients, group: 'Cung ứng', access: ['admin', 'hospital', 'staff'] },
-  { key: 'requests', label: 'Phiếu yêu cầu', component: Requests, group: 'Cung ứng', access: ['admin', 'hospital', 'staff'] },
-  { key: 'exports', label: 'Xuất kho FIFO', component: Exports, group: 'Cung ứng', access: ['admin', 'staff'] },
-  { key: 'reports', label: 'Báo cáo', component: Reports, group: 'Tổng hợp', access: ['admin', 'staff'] },
-  { key: 'accounts', label: 'Tài khoản', component: Accounts, group: 'Tổng hợp', access: ['admin'] },
+  { key: 'dashboard', label: 'Tổng quan', icon: LayoutDashboard, component: Dashboard, group: 'Điều hành', access: ['admin', 'staff'] },
+  { key: 'hospital-dashboard', label: 'Tổng quan bệnh viện', icon: LayoutDashboard, component: HospitalDashboard, group: 'Điều hành', access: ['hospital'] },
+  { key: 'my-profile', label: 'Hồ sơ của tôi', icon: UserRound, component: MyProfile, group: 'Người hiến', access: ['donor'] },
+  { key: 'my-donations', label: 'Lịch sử hiến máu', icon: Droplet, component: MyDonations, group: 'Người hiến', access: ['donor'] },
+  { key: 'donor-campaigns', label: 'Chiến dịch sắp tới', icon: CalendarHeart, component: DonorCampaigns, group: 'Người hiến', access: ['donor'] },
+  { key: 'my-points', label: 'Điểm thưởng', icon: Award, component: MyPoints, group: 'Người hiến', access: ['donor'] },
+  { key: 'donors', label: 'Người hiến máu', icon: Users, component: Donors, group: 'Người hiến', access: ['admin', 'staff'] },
+  { key: 'donor-data', label: 'Dữ liệu người hiến', icon: Database, component: DonorData, group: 'Người hiến', access: ['admin', 'staff'] },
+  { key: 'campaigns', label: 'Chiến dịch', icon: Megaphone, component: Campaigns, group: 'Tiếp nhận', access: ['admin', 'staff'] },
+  { key: 'blood-bags', label: 'Gói máu', icon: Droplet, component: BloodBags, group: 'Tiếp nhận', access: ['admin', 'staff'] },
+  { key: 'lab-tests', label: 'Xét nghiệm', icon: FlaskConical, component: LabTests, group: 'Y khoa', access: ['admin', 'staff'] },
+  { key: 'components', label: 'Kho máu', icon: Boxes, component: Components, group: 'Kho', access: ['admin', 'staff'] },
+  { key: 'hospitals', label: 'Bệnh viện', icon: Building2, component: Hospitals, group: 'Cung ứng', access: ['admin', 'staff'] },
+  { key: 'patients', label: 'Bệnh nhân', icon: BedDouble, component: Patients, group: 'Cung ứng', access: ['admin', 'hospital', 'staff'] },
+  { key: 'requests', label: 'Phiếu yêu cầu', icon: ClipboardList, component: Requests, group: 'Cung ứng', access: ['admin', 'hospital', 'staff'] },
+  { key: 'exports', label: 'Xuất kho FIFO', icon: Truck, component: Exports, group: 'Cung ứng', access: ['admin', 'staff'] },
+  { key: 'reports', label: 'Báo cáo', icon: BarChart3, component: Reports, group: 'Tổng hợp', access: ['admin', 'staff'] },
+  { key: 'accounts', label: 'Tài khoản', icon: ShieldCheck, component: Accounts, group: 'Tổng hợp', access: ['admin'] },
 ]
 
 const accounts = ref([])
@@ -471,7 +476,7 @@ onUnmounted(() => {
         <section v-for="(items, group) in groupedModules" :key="group" class="nav-group">
           <p class="nav-group-title">{{ group }}</p>
           <button v-for="item in items" :key="item.key" class="nav-item" :class="{ active: activeKey === item.key }" type="button" :aria-current="activeKey === item.key ? 'page' : undefined" @click="navigate(item)">
-            <span>{{ item.label }}</span>
+            <span class="nav-item-label"><component :is="item.icon" class="nav-icon" :size="18" :stroke-width="2" aria-hidden="true" /><span>{{ item.label }}</span></span>
           </button>
         </section>
       </nav>
