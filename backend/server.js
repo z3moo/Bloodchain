@@ -669,7 +669,7 @@ app.delete('/api/patients/:id', requireRole('admin', 'staff', 'hospital'), async
   } catch (error) { safeError(res, error) }
 })
 
-app.get('/api/blood-bags', async (_req, res) => {
+app.get('/api/blood-bags', requireRole('admin', 'staff'), async (_req, res) => {
   try { const pool = await getPool(); const result = await pool.request().query('SELECT MaGoiMau AS id, NgayHien AS donatedAt, TheTich AS volume, TrangThaiKiemDinh AS testStatus, MaNguoiHien AS donorId, MaNhomMau AS bloodGroup, MaChienDich AS campaignId, MaNV_ThuNhan AS staffId FROM GOI_MAU_TOAN_PHAN ORDER BY MaGoiMau'); res.json(result.recordset) }
   catch (error) { safeError(res, error) }
 })
@@ -680,11 +680,15 @@ app.post('/api/blood-bags', requireRole('admin', 'staff'), async (req, res) => {
     const donorId = body.donorId || await firstValue(pool, 'SELECT TOP 1 MaNguoiHien AS value FROM NGUOI_HIEN ORDER BY MaNguoiHien', 'NH001')
     const campaignId = body.campaignId || await firstValue(pool, 'SELECT TOP 1 MaChienDich AS value FROM CHIEN_DICH ORDER BY MaChienDich', 'CD001')
     const staffId = body.staffId || await firstValue(pool, 'SELECT TOP 1 MaNV AS value FROM NHAN_VIEN ORDER BY MaNV', 'NV001')
+    // A brand-new bag has no lab results yet, so it can't be created already
+    // "Đạt" — the guard rejects that (forces the test-then-pass workflow).
+    const statusBlocker = await checkTestStatusAllowed(pool, id, body.testStatus)
+    if (statusBlocker) return res.status(400).json({ message: statusBlocker })
     await pool.request().input('MaGoiMau', sql.VarChar(20), id).input('NgayHien', sql.DateTime, asDateTime(body.donatedAt)).input('TheTich', sql.Int, asInt(body.volume, 350)).input('MaNguoiHien', sql.VarChar(20), donorId).input('MaNhomMau', sql.VarChar(5), body.bloodGroup || 'O+').input('MaChienDich', sql.VarChar(20), campaignId).input('MaNV_ThuNhan', sql.VarChar(20), staffId).query(`INSERT INTO GOI_MAU_TOAN_PHAN VALUES (@MaGoiMau, @NgayHien, @TheTich, ${nText(body.testStatus, T.waitingTest)}, @MaNguoiHien, @MaNhomMau, @MaChienDich, @MaNV_ThuNhan)`)
-    // Bump the campaign's realised count. Donor points + member rank are owned
-    // by the DB (trg_CongDiem on INSERT, trg_UpdateHang recomputes the rank),
-    // so the backend no longer touches DiemTichLuy here.
-    await pool.request().input('MaChienDich', sql.VarChar(20), campaignId).query('UPDATE CHIEN_DICH SET SoLuongThucTe = ISNULL(SoLuongThucTe, 0) + 1 WHERE MaChienDich = @MaChienDich')
+    // SoLuongThucTe (campaign actual count) is recomputed by trg_TinhSoLuongThucTe
+    // as COUNT of real bags per campaign. Donor points + member rank are owned by
+    // the DB too (trg_CongDiem on INSERT, trg_UpdateHang recomputes the rank), so
+    // the backend no longer touches either counter here.
     res.status(201).json({ id, ...body, donorId, campaignId, staffId })
   } catch (error) { safeError(res, error) }
 })
@@ -692,6 +696,9 @@ app.put('/api/blood-bags/:id', requireRole('admin', 'staff'), async (req, res) =
   const body = req.body || {}
   try {
     const pool = await getPool()
+    // Can only flip to "Đạt" when real negative tests exist for this bag.
+    const statusBlocker = await checkTestStatusAllowed(pool, req.params.id, body.testStatus)
+    if (statusBlocker) return res.status(400).json({ message: statusBlocker })
     await updateRow(pool, 'GOI_MAU_TOAN_PHAN', 'MaGoiMau', req.params.id, {
       NgayHien: { type: sql.DateTime, value: asDateTime(body.donatedAt) },
       TheTich: { type: sql.Int, value: asInt(body.volume, 350) },
@@ -707,23 +714,16 @@ app.put('/api/blood-bags/:id', requireRole('admin', 'staff'), async (req, res) =
 app.delete('/api/blood-bags/:id', requireRole('admin', 'staff'), async (req, res) => {
   try {
     const pool = await getPool()
-    // Reverse the campaign counter before deleting; if the bag isn't there
-    // the SELECT just returns no rows and we still return 204 with safeError
-    // catching FK conflicts. Donor points are reversed by trg_TruDiem (DELETE
-    // trigger), so the backend only handles the campaign count here.
-    const meta = await pool.request().input('MaGoiMau', sql.VarChar(20), req.params.id).query('SELECT MaChienDich, MaNguoiHien FROM GOI_MAU_TOAN_PHAN WHERE MaGoiMau = @MaGoiMau')
+    // Campaign count + donor points are reversed by DB triggers
+    // (trg_TinhSoLuongThucTe recomputes the campaign actual on DELETE,
+    // trg_TruDiem reverses the donor points), so the backend just deletes the
+    // row; safeError catches any FK conflict.
     await deleteRow(pool, 'GOI_MAU_TOAN_PHAN', 'MaGoiMau', req.params.id)
-    if (meta.recordset.length) {
-      const { MaChienDich } = meta.recordset[0]
-      if (MaChienDich) {
-        await pool.request().input('MaChienDich', sql.VarChar(20), MaChienDich).query('UPDATE CHIEN_DICH SET SoLuongThucTe = CASE WHEN ISNULL(SoLuongThucTe, 0) > 0 THEN SoLuongThucTe - 1 ELSE 0 END WHERE MaChienDich = @MaChienDich')
-      }
-    }
     res.status(204).end()
   } catch (error) { safeError(res, error) }
 })
 
-app.get('/api/lab-tests', async (_req, res) => {
+app.get('/api/lab-tests', requireRole('admin', 'staff'), async (_req, res) => {
   try { const pool = await getPool(); const result = await pool.request().query('SELECT MaXetNghiem AS id, LoaiXetNghiem AS type, KetQua AS result, NgayXetNghiem AS testedAt, MaGoiMau AS bloodBagId, MaNV_ThucHien AS staffId FROM KET_QUA_XET_NGHIEM ORDER BY MaXetNghiem'); res.json(result.recordset) }
   catch (error) { safeError(res, error) }
 })
@@ -764,7 +764,46 @@ async function checkBagReadyForComponents(pool, bagId) {
   return null
 }
 
-// Standard shelf life by component type (days from collection).
+// Workflow guard: a bag holds TheTich ml total, so the sum of all component
+// volumes split from it must not exceed that. Returns null when OK, otherwise an
+// error message. `excludeComponentId` lets an UPDATE ignore the row being edited
+// so re-saving the same component doesn't count its old volume twice.
+async function checkBagVolumeCapacity(pool, bagId, newVolume, excludeComponentId = null) {
+  const bag = await pool.request().input('MaGoiMau', sql.VarChar(20), bagId).query('SELECT TheTich FROM GOI_MAU_TOAN_PHAN WHERE MaGoiMau = @MaGoiMau')
+  if (!bag.recordset.length) return 'Không tìm thấy gói máu.'
+  const capacity = Number(bag.recordset[0].TheTich || 0)
+  const used = await pool.request()
+    .input('MaGoiMau', sql.VarChar(20), bagId)
+    .input('excludeId', sql.VarChar(20), excludeComponentId || '')
+    .query('SELECT ISNULL(SUM(TheTichThucTe), 0) AS used FROM THANH_PHAN_MAU WHERE MaGoiMau = @MaGoiMau AND MaThanhPhan <> @excludeId')
+  const alreadyUsed = Number(used.recordset[0].used || 0)
+  const total = alreadyUsed + Number(newVolume || 0)
+  if (total > capacity) {
+    return `Tổng thể tích thành phần (${total} ml) vượt quá thể tích gói máu (${capacity} ml). Đã tách ${alreadyUsed} ml, còn lại ${Math.max(capacity - alreadyUsed, 0)} ml.`
+  }
+  return null
+}
+
+// Workflow guard: a bag may only be marked "Đạt" (passed) when it actually has
+// lab results AND none are positive. Stops a manual "Đạt" from substituting for
+// real testing (which would let untested/infected blood be split & exported).
+// Returns null when the requested status is allowed, else an error message.
+async function checkTestStatusAllowed(pool, bagId, requestedStatus) {
+  if (String(requestedStatus || '').trim() !== 'Đạt') return null
+  const tests = await pool.request().input('MaGoiMau', sql.VarChar(20), bagId).query(`
+    SELECT COUNT(*) AS total,
+           SUM(CASE WHEN KetQua = N'Dương tính' THEN 1 ELSE 0 END) AS positives
+    FROM KET_QUA_XET_NGHIEM WHERE MaGoiMau = @MaGoiMau
+  `)
+  const row = tests.recordset[0] || { total: 0, positives: 0 }
+  if (Number(row.total || 0) === 0) {
+    return 'Gói máu chưa có kết quả xét nghiệm, không thể đặt trạng thái "Đạt".'
+  }
+  if (Number(row.positives || 0) > 0) {
+    return 'Gói máu có kết quả xét nghiệm dương tính, không thể đặt trạng thái "Đạt".'
+  }
+  return null
+}
 const COMPONENT_SHELF_LIFE_DAYS = {
   'Hồng cầu': 42,
   'Huyết tương': 365,
@@ -776,7 +815,20 @@ function defaultExpiry(componentType, donatedAt) {
   return new Date(base.getTime() + days * 24 * 60 * 60 * 1000)
 }
 
-app.get('/api/components', async (_req, res) => {
+// Map a component-type label to a coarse category so the several concrete
+// labels per kind compare correctly: "Hồng cầu"/"Khối hồng cầu" -> 'red',
+// "Tiểu cầu"/"Khối tiểu cầu" -> 'platelet', "Huyết tương"/"Huyết tương tươi"
+// -> 'plasma'. Used to gate exports so a platelet request can't be filled with
+// red cells. Returns '' when unrecognised.
+function componentCategory(text) {
+  const value = String(text || '').toLowerCase()
+  if (value.includes('hồng cầu')) return 'red'
+  if (value.includes('tiểu cầu')) return 'platelet'
+  if (value.includes('huyết tương')) return 'plasma'
+  return ''
+}
+
+app.get('/api/components', requireRole('admin', 'staff'), async (_req, res) => {
   try { const pool = await getPool(); const result = await pool.request().query('SELECT MaThanhPhan AS id, LoaiThanhPhan AS type, TheTichThucTe AS volume, HanSuDung AS expiresAt, TrangThai AS status, MaGoiMau AS bloodBagId, MaViTri AS storageId FROM THANH_PHAN_MAU ORDER BY MaThanhPhan'); res.json(result.recordset) }
   catch (error) { safeError(res, error) }
 })
@@ -788,6 +840,8 @@ app.post('/api/components', requireRole('admin', 'staff'), async (req, res) => {
     const bloodBagId = body.bloodBagId || await firstValue(pool, 'SELECT TOP 1 MaGoiMau AS value FROM GOI_MAU_TOAN_PHAN ORDER BY MaGoiMau', 'GM001')
     const blocker = await checkBagReadyForComponents(pool, bloodBagId)
     if (blocker) return res.status(400).json({ message: blocker })
+    const overCapacity = await checkBagVolumeCapacity(pool, bloodBagId, asInt(body.volume, 250))
+    if (overCapacity) return res.status(400).json({ message: overCapacity })
     const storageId = body.storageId || await firstValue(pool, 'SELECT TOP 1 MaViTri AS value FROM VI_TRI_KHO ORDER BY MaViTri', 'VT001')
     let expiresAt
     if (body.expiresAt) {
@@ -812,6 +866,8 @@ app.put('/api/components/:id', requireRole('admin', 'staff'), async (req, res) =
     // Re-check the bag if the caller is changing it.
     const blocker = await checkBagReadyForComponents(pool, targetBag)
     if (blocker) return res.status(400).json({ message: blocker })
+    const overCapacity = await checkBagVolumeCapacity(pool, targetBag, asInt(body.volume, 250), req.params.id)
+    if (overCapacity) return res.status(400).json({ message: overCapacity })
     let expiresAt
     if (body.expiresAt) {
       expiresAt = new Date(body.expiresAt)
@@ -859,10 +915,23 @@ app.post('/api/requests', requireRole('admin', 'staff', 'hospital'), async (req,
     // Hospital must use their own MaBV; status starts at "Chờ duyệt" and they
     // cannot self-approve. Admin/staff can supply hospitalId/status freely.
     const isHospital = req.user.role === 'hospital'
+    const patientId = body.patientId || await firstValue(pool, 'SELECT TOP 1 MaBenhNhan AS value FROM BENH_NHAN ORDER BY MaBenhNhan', 'BN001')
+    // The request is FOR a specific patient, so its blood group is the patient's
+    // actual MaNhomMau (authoritative) — never the client-supplied bloodGroup,
+    // which previously let a request store O+ for an A- patient and still clear
+    // the strict blood-group check at export time.
+    const patient = await pool.request().input('MaBenhNhan', sql.VarChar(20), patientId).query('SELECT MaNhomMau, MaBV FROM BENH_NHAN WHERE MaBenhNhan = @MaBenhNhan')
+    if (!patient.recordset.length) return res.status(404).json({ message: 'Không tìm thấy bệnh nhân.' })
+    const patientRow = patient.recordset[0]
+    // A hospital can only file requests for its own patients (mirror the
+    // ownership check already enforced on PUT/DELETE patients).
+    if (isHospital && patientRow.MaBV !== req.user.hospitalId) {
+      return res.status(403).json({ message: 'Bệnh nhân không thuộc bệnh viện của bạn.' })
+    }
     const hospitalId = isHospital
       ? (req.user.hospitalId || 'BV001')
-      : (body.hospitalId || await firstValue(pool, 'SELECT TOP 1 MaBV AS value FROM BENH_VIEN ORDER BY MaBV', 'BV001'))
-    const patientId = body.patientId || await firstValue(pool, 'SELECT TOP 1 MaBenhNhan AS value FROM BENH_NHAN ORDER BY MaBenhNhan', 'BN001')
+      : (body.hospitalId || patientRow.MaBV || await firstValue(pool, 'SELECT TOP 1 MaBV AS value FROM BENH_VIEN ORDER BY MaBV', 'BV001'))
+    const bloodGroup = patientRow.MaNhomMau || 'O+'
     const approverId = isHospital ? null : (body.approverId || null)
     const status = isHospital ? T.waitingApproval : (body.status || T.waitingApproval)
     const insert = pool.request()
@@ -871,11 +940,11 @@ app.post('/api/requests', requireRole('admin', 'staff', 'hospital'), async (req,
       .input('SoLuongML', sql.Int, asInt(body.volume, 250))
       .input('MaBV', sql.VarChar(20), hospitalId)
       .input('MaBenhNhan', sql.VarChar(20), patientId)
-      .input('MaNhomMau', sql.VarChar(5), body.bloodGroup || 'O+')
+      .input('MaNhomMau', sql.VarChar(5), bloodGroup)
     if (approverId) insert.input('MaNV_Duyet', sql.VarChar(20), approverId)
     const approverSql = approverId ? '@MaNV_Duyet' : 'NULL'
     await insert.query(`INSERT INTO PHIEU_YEU_CAU VALUES (@MaPhieuYC, @NgayYeuCau, ${nText(body.componentType, T.redCells)}, @SoLuongML, ${nText(status, T.waitingApproval)}, @MaBV, @MaBenhNhan, @MaNhomMau, ${approverSql})`)
-    res.status(201).json({ id, ...body, hospitalId, patientId, approverId, status })
+    res.status(201).json({ id, ...body, hospitalId, patientId, approverId, status, bloodGroup })
   } catch (error) { safeError(res, error) }
 })
 app.put('/api/requests/:id', requireRole('admin', 'staff', 'hospital'), async (req, res) => {
@@ -883,39 +952,51 @@ app.put('/api/requests/:id', requireRole('admin', 'staff', 'hospital'), async (r
   try {
     const pool = await getPool()
     const isHospital = req.user.role === 'hospital'
-    let preserved = null
+    // Status + approver are owned by the /approve endpoint (which guards the
+    // "Chờ duyệt"-only transition), so a plain edit must never change them — for
+    // any role. Read the current row to preserve those fields.
+    const existing = await pool.request().input('_id', sql.VarChar(20), req.params.id).query('SELECT MaBV, TrangThaiDuyet, MaNV_Duyet FROM PHIEU_YEU_CAU WHERE MaPhieuYC = @_id')
+    if (!existing.recordset.length) return res.status(404).json({ message: 'Không tìm thấy phiếu yêu cầu.' })
+    const preserved = existing.recordset[0]
     if (isHospital) {
-      const owned = await pool.request().input('_id', sql.VarChar(20), req.params.id).query('SELECT MaBV, TrangThaiDuyet, MaNV_Duyet FROM PHIEU_YEU_CAU WHERE MaPhieuYC = @_id')
-      if (!owned.recordset.length) return res.status(404).json({ message: 'Không tìm thấy phiếu yêu cầu.' })
-      const row = owned.recordset[0]
-      if (row.MaBV !== req.user.hospitalId) {
+      if (preserved.MaBV !== req.user.hospitalId) {
         return res.status(403).json({ message: 'Phiếu không thuộc bệnh viện của bạn.' })
       }
-      if (String(row.TrangThaiDuyet || '').trim() !== T.waitingApproval) {
+      if (String(preserved.TrangThaiDuyet || '').trim() !== T.waitingApproval) {
         return res.status(409).json({ message: 'Chỉ phiếu đang chờ duyệt mới có thể chỉnh sửa.' })
       }
-      preserved = row
+    }
+    // The request's blood group must follow the chosen patient's actual group
+    // (authoritative), not a client-picked value. Also lets us reject a hospital
+    // editing a request onto another hospital's patient.
+    const patientId = body.patientId || 'BN001'
+    const patient = await pool.request().input('MaBenhNhan', sql.VarChar(20), patientId).query('SELECT MaNhomMau, MaBV FROM BENH_NHAN WHERE MaBenhNhan = @MaBenhNhan')
+    if (!patient.recordset.length) return res.status(404).json({ message: 'Không tìm thấy bệnh nhân.' })
+    const patientRow = patient.recordset[0]
+    if (isHospital && patientRow.MaBV !== req.user.hospitalId) {
+      return res.status(403).json({ message: 'Bệnh nhân không thuộc bệnh viện của bạn.' })
     }
     const updates = {
       NgayYeuCau: { type: sql.DateTime, value: asDateTime(body.requestedAt) },
       LoaiThanhPhanCan: { raw: nText(body.componentType, T.redCells) },
       SoLuongML: { type: sql.Int, value: asInt(body.volume, 250) },
-      MaBenhNhan: { type: sql.VarChar(20), value: body.patientId || 'BN001' },
-      MaNhomMau: { type: sql.VarChar(5), value: body.bloodGroup || 'O+' },
+      MaBenhNhan: { type: sql.VarChar(20), value: patientId },
+      MaNhomMau: { type: sql.VarChar(5), value: patientRow.MaNhomMau || 'O+' },
     }
     if (isHospital) {
       // Lock: hospital cannot change ownership, status, or approver.
       updates.MaBV = { type: sql.VarChar(20), value: preserved.MaBV }
-      updates.TrangThaiDuyet = { raw: nText(preserved.TrangThaiDuyet, T.waitingApproval) }
-      if (preserved.MaNV_Duyet) {
-        updates.MaNV_Duyet = { type: sql.VarChar(20), value: preserved.MaNV_Duyet }
-      } else {
-        updates.MaNV_Duyet = { raw: 'NULL' }
-      }
     } else {
-      updates.MaBV = { type: sql.VarChar(20), value: body.hospitalId || 'BV001' }
-      updates.TrangThaiDuyet = { raw: nText(body.status, T.waitingApproval) }
-      updates.MaNV_Duyet = { type: sql.VarChar(20), value: body.approverId || 'NV001' }
+      updates.MaBV = { type: sql.VarChar(20), value: body.hospitalId || preserved.MaBV || 'BV001' }
+    }
+    // Status + approver are preserved for ALL roles here; transitions go through
+    // PATCH /api/requests/:id/approve, which enforces the "Chờ duyệt"-only guard.
+    // This stops a plain edit from resurrecting a rejected/issued request.
+    updates.TrangThaiDuyet = { raw: nText(preserved.TrangThaiDuyet, T.waitingApproval) }
+    if (preserved.MaNV_Duyet) {
+      updates.MaNV_Duyet = { type: sql.VarChar(20), value: preserved.MaNV_Duyet }
+    } else {
+      updates.MaNV_Duyet = { raw: 'NULL' }
     }
     await updateRow(pool, 'PHIEU_YEU_CAU', 'MaPhieuYC', req.params.id, updates)
     res.json({ id: req.params.id, ...body })
@@ -998,20 +1079,46 @@ app.post('/api/exports', requireRole('admin', 'staff'), async (req, res) => {
     const id = await nextId(pool, 'PHIEU_XUAT', 'MaPhieuXuat', 'PX')
     const requestId = body.requestId || await firstValue(pool, 'SELECT TOP 1 MaPhieuYC AS value FROM PHIEU_YEU_CAU ORDER BY MaPhieuYC', 'YC001')
     const staffId = req.user?.staffId || body.staffId || await firstValue(pool, 'SELECT TOP 1 MaNV AS value FROM NHAN_VIEN ORDER BY MaNV', 'NV001')
-    const componentId = body.componentId || await firstValue(pool, `SELECT TOP 1 MaThanhPhan AS value FROM THANH_PHAN_MAU WHERE TrangThai <> ${nText(T.exported)} ORDER BY HanSuDung, MaThanhPhan`, 'TP001')
     const totalVolume = asInt(body.totalVolume || body.volume, 250)
     const crossMatch = String(body.crossMatch || T.compatible)
 
-    // Workflow gate: validate request approval, blood-group match, cross-match,
-    // component status, expiry, and requested-volume cap before any write.
-    const reqRow = await pool.request().input('MaPhieuYC', sql.VarChar(20), requestId).query('SELECT TrangThaiDuyet, MaNhomMau, SoLuongML FROM PHIEU_YEU_CAU WHERE MaPhieuYC = @MaPhieuYC')
+    // Workflow gate: validate request approval, blood-group match, component
+    // type match, cross-match, component status, expiry, and requested-volume
+    // cap before any write.
+    const reqRow = await pool.request().input('MaPhieuYC', sql.VarChar(20), requestId).query('SELECT TrangThaiDuyet, MaNhomMau, SoLuongML, LoaiThanhPhanCan FROM PHIEU_YEU_CAU WHERE MaPhieuYC = @MaPhieuYC')
     if (!reqRow.recordset.length) return res.status(404).json({ message: 'Không tìm thấy phiếu yêu cầu.' })
     const requestRow = reqRow.recordset[0]
     if (String(requestRow.TrangThaiDuyet || '').trim() !== 'Đã duyệt') {
       return res.status(400).json({ message: 'Phiếu yêu cầu chưa được duyệt, không thể xuất kho.' })
     }
+    // FIFO auto-pick: when no component is named, choose the earliest-expiring
+    // READY, not-expired component whose source bag matches the request's blood
+    // group AND requested component category — so the picked unit already passes
+    // the downstream group/type checks instead of being a near-random miss.
+    const categoryKeyword = { red: T.redCells, platelet: T.plateletWord, plasma: T.plasmaWord }[componentCategory(requestRow.LoaiThanhPhanCan)] || ''
+    let componentId = body.componentId
+    if (!componentId) {
+      const pick = await pool.request()
+        .input('grp', sql.VarChar(5), requestRow.MaNhomMau || '')
+        .query(`
+          SELECT TOP 1 tp.MaThanhPhan AS value
+          FROM THANH_PHAN_MAU tp
+          JOIN GOI_MAU_TOAN_PHAN gm ON gm.MaGoiMau = tp.MaGoiMau
+          WHERE tp.TrangThai = ${nText(T.ready)}
+            AND tp.HanSuDung > GETDATE()
+            AND gm.MaNhomMau = @grp
+            ${categoryKeyword ? `AND tp.LoaiThanhPhan LIKE ${nLike(categoryKeyword)}` : ''}
+          ORDER BY tp.HanSuDung, tp.MaThanhPhan
+        `)
+      componentId = pick.recordset[0]?.value
+      if (!componentId) {
+        return res.status(404).json({ message: `Không còn thành phần phù hợp để xuất (nhóm máu ${requestRow.MaNhomMau}, loại "${requestRow.LoaiThanhPhanCan}").` })
+      }
+    }
     const compRow = await pool.request().input('MaThanhPhan', sql.VarChar(20), componentId).query(`
-      SELECT tp.TrangThai AS TrangThai, tp.HanSuDung AS HanSuDung, gm.MaNhomMau AS MaNhomMau
+      SELECT tp.TrangThai AS TrangThai, tp.HanSuDung AS HanSuDung, tp.LoaiThanhPhan AS LoaiThanhPhan,
+             tp.TheTichThucTe AS TheTichThucTe, tp.MaGoiMau AS MaGoiMau,
+             gm.MaNhomMau AS MaNhomMau, gm.TrangThaiKiemDinh AS TrangThaiKiemDinh
       FROM THANH_PHAN_MAU tp
       LEFT JOIN GOI_MAU_TOAN_PHAN gm ON gm.MaGoiMau = tp.MaGoiMau
       WHERE tp.MaThanhPhan = @MaThanhPhan
@@ -1021,14 +1128,39 @@ app.post('/api/exports', requireRole('admin', 'staff'), async (req, res) => {
     if (String(componentRow.TrangThai || '').trim() !== T.ready) {
       return res.status(400).json({ message: 'Thành phần đã xuất hoặc không sẵn sàng.' })
     }
+    // Re-validate the SOURCE BAG's lab safety at export time. A bag can pass
+    // testing when a component is created, then later get a positive result —
+    // the component status doesn't change, so without this check an already-split
+    // unit from a now-reactive bag could still be issued. Block if the bag isn't
+    // "Đạt" or has any positive test.
+    if (componentRow.MaGoiMau) {
+      const bagBlocker = await checkBagReadyForComponents(pool, componentRow.MaGoiMau)
+      if (bagBlocker) {
+        return res.status(400).json({ message: `Gói máu nguồn không đủ điều kiện xuất: ${bagBlocker}` })
+      }
+    }
     if (componentRow.HanSuDung && new Date(componentRow.HanSuDung) < new Date()) {
       return res.status(400).json({ message: 'Thành phần đã hết hạn sử dụng.' })
     }
     if (componentRow.MaNhomMau && requestRow.MaNhomMau && componentRow.MaNhomMau !== requestRow.MaNhomMau) {
       return res.status(400).json({ message: `Nhóm máu không khớp (yêu cầu ${requestRow.MaNhomMau}, thành phần ${componentRow.MaNhomMau}).` })
     }
+    // Component type must match the request's requested kind by category, so a
+    // platelet request can't be filled with red cells. Categories cover the
+    // several concrete labels per kind (e.g. "Hồng cầu"/"Khối hồng cầu").
+    const wantCategory = componentCategory(requestRow.LoaiThanhPhanCan)
+    const gotCategory = componentCategory(componentRow.LoaiThanhPhan)
+    if (wantCategory && gotCategory && wantCategory !== gotCategory) {
+      return res.status(400).json({ message: `Loại thành phần không khớp (yêu cầu "${requestRow.LoaiThanhPhanCan}", thành phần "${componentRow.LoaiThanhPhan}").` })
+    }
     if (crossMatch.includes('Không')) {
       return res.status(400).json({ message: 'Phản ứng chéo không hòa hợp, không thể xuất kho.' })
+    }
+    // Recorded export volume can't exceed what the component physically holds,
+    // and also can't exceed what the request asked for.
+    const componentVolume = Number(componentRow.TheTichThucTe || 0)
+    if (componentVolume > 0 && totalVolume > componentVolume) {
+      return res.status(400).json({ message: `Vượt quá thể tích thành phần (${componentVolume} ml).` })
     }
     if (totalVolume > Number(requestRow.SoLuongML || 0)) {
       return res.status(400).json({ message: `Vượt quá thể tích yêu cầu (${requestRow.SoLuongML} ml).` })

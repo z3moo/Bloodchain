@@ -1,5 +1,5 @@
 <script setup>
-import { computed, toRef } from 'vue'
+import { computed, ref, toRef } from 'vue'
 import Pagination from '../components/Pagination.vue'
 import { usePagination } from '../composables/usePagination'
 
@@ -12,9 +12,21 @@ const props = defineProps({
   databaseResetError: { type: String, default: '' },
 })
 
+const search = ref('')
+const roleFilter = ref('')
+
 // Donors self-register and manage their own profile, so they don't belong in
 // the admin account-management list (only admin/staff/hospital are managed here).
-const visibleAccounts = computed(() => props.accounts.filter((a) => a.role !== 'donor'))
+const visibleAccounts = computed(() => {
+  const term = search.value.trim().toLowerCase()
+  return props.accounts.filter((a) => {
+    if (a.role === 'donor') return false
+    if (roleFilter.value && a.role !== roleFilter.value) return false
+    if (term && ![a.username, a.displayName, accountLabel(a)]
+      .some((field) => String(field || '').toLowerCase().includes(term))) return false
+    return true
+  })
+})
 const acc = usePagination(visibleAccounts, 25)
 
 const emit = defineEmits(['revoke-staff', 'delete-account', 'approve-account', 'reject-account', 'reset-database'])
@@ -120,6 +132,20 @@ function resetDatabase() {
           <h3>Danh s&#225;ch t&#224;i kho&#7843;n</h3>
           <p>Admin c&#243; th&#7875; thu h&#7891;i quy&#7873;n staff ho&#7863;c x&#243;a t&#224;i kho&#7843;n kh&#244;ng c&#242;n s&#7917; d&#7909;ng. T&#224;i kho&#7843;n ng&#432;&#7901;i hi&#7871;n kh&#244;ng hi&#7875;n th&#7883; &#7903; &#273;&#226;y.</p>
         </div>
+      </div>
+      <div class="filter-bar">
+        <input
+          v-model="search"
+          type="search"
+          placeholder="T&#236;m theo t&#234;n &#273;&#259;ng nh&#7853;p / t&#234;n / nh&#243;m..."
+          aria-label="T&#236;m ki&#7871;m t&#224;i kho&#7843;n"
+        />
+        <select v-model="roleFilter" aria-label="L&#7885;c theo nh&#243;m">
+          <option value="">T&#7845;t c&#7843; nh&#243;m</option>
+          <option value="admin">Qu&#7843;n tr&#7883;</option>
+          <option value="staff">Nh&#226;n vi&#234;n trung t&#226;m</option>
+          <option value="hospital">B&#7879;nh vi&#7879;n</option>
+        </select>
       </div>
       <div class="table-wrap">
         <table>

@@ -36,4 +36,17 @@ SELECT 'TK_' + bv.MaBV, bv.MaBV, @pw, bv.TenBV,
        NULL, NULL, NULL, NULL, NULL
 FROM BENH_VIEN bv
 WHERE NOT EXISTS (SELECT 1 FROM TAI_KHOAN t WHERE t.MaBV = bv.MaBV);
+
+-- Tai khoan cho nhan vien (STAFF)
+-- Co nhieu nhan vien (vd: nhan vien xet nghiem trong cac tui mau / ket qua xet
+-- nghiem) chua co tai khoan dang nhap. Tao 1 tai khoan STAFF cho moi NHAN_VIEN
+-- chua co tai khoan. Ten dang nhap = ma nhan vien (vd: NV003, NV004).
+INSERT INTO TAI_KHOAN
+  (MaTaiKhoan, TenDangNhap, MatKhau, HoTen, Email, VaiTro, MaNV, MaNguoiHien, MaBV, TrangThai,
+   VaiTroYeuCau, TenDonVi, DiaChi, SDT, ChucVu)
+SELECT 'TK_' + nv.MaNV, nv.MaNV, @pw, nv.HoTen,
+       ISNULL(nv.Email, LOWER(nv.MaNV) + '@demo.local'), 'STAFF', nv.MaNV, NULL, NULL, @HoatDong,
+       NULL, NULL, NULL, NULL, nv.ChucVu
+FROM NHAN_VIEN nv
+WHERE NOT EXISTS (SELECT 1 FROM TAI_KHOAN t WHERE t.MaNV = nv.MaNV);
 GO

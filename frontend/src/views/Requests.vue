@@ -26,7 +26,8 @@ const fields = computed(() => [
       }
     : { key: 'hospitalId', label: 'Bệnh viện', optionsFrom: '/hospitals' },
   { key: 'patientId', label: 'Bệnh nhân', optionsFrom: '/patients' },
-  { key: 'bloodGroup', label: 'Nhóm máu', optionsFrom: '/blood-groups', default: 'O+' },
+  // Nhóm máu của phiếu = nhóm máu thật của bệnh nhân (suy ra ở backend), nên
+  // không cho chọn tay nữa để tránh lệch nhóm máu so với bệnh nhân.
   { key: 'componentType', label: 'Thành phần cần', options: [
     { id: 'Hồng cầu', name: 'Hồng cầu' },
     { id: 'Huyết tương', name: 'Huyết tương' },

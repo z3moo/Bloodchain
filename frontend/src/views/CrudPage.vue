@@ -33,14 +33,48 @@ const loading = ref(false)
 const message = ref('')
 const error = ref('')
 const editingId = ref(null)
+const search = ref('')
+// Per-column filter terms, keyed by column.key. AND-combined with each other
+// and with the global search. Lets users narrow by a specific field (e.g. only
+// blood group "A+") instead of one catch-all box.
+const columnFilters = reactive({})
+const showColumnFilters = ref(false)
 const form = reactive({})
 const lookups = reactive({})
 
 const showActionsCol = computed(() => props.canEdit || props.canDelete || props.customActions.length > 0)
 
+const hasActiveColumnFilter = computed(() =>
+  props.columns.some((column) => String(columnFilters[column.key] || '').trim() !== ''),
+)
+
+// Per-tab filtering: a row passes when it matches the global search (against any
+// visible column) AND every active per-column filter (against that column's
+// rendered text). Case-insensitive, accent-sensitive. Uses display() so lookups,
+// dates and ids all match what the user actually sees.
+const filteredRows = computed(() => {
+  const term = search.value.trim().toLowerCase()
+  const active = props.columns
+    .map((column) => [column, String(columnFilters[column.key] || '').trim().toLowerCase()])
+    .filter(([, value]) => value !== '')
+  if (!term && !active.length) return rows.value
+  return rows.value.filter((row) => {
+    if (term && !props.columns.some((column) => String(display(row, column)).toLowerCase().includes(term))) {
+      return false
+    }
+    return active.every(([column, value]) => String(display(row, column)).toLowerCase().includes(value))
+  })
+})
+
+function clearFilters() {
+  search.value = ''
+  props.columns.forEach((column) => { columnFilters[column.key] = '' })
+}
+
 // Client-side pagination: only the current page's rows are rendered, so big
-// tables (e.g. ~4600 components) don't freeze the UI.
-const { page, totalPages, total, paged: pagedRows, goToPage } = usePagination(rows, props.pageSize)
+// tables (e.g. ~4600 components) don't freeze the UI. Paginate the filtered set
+// so search + column filters narrow the pages too.
+const { page, totalPages, total, paged: pagedRows, goToPage } = usePagination(filteredRows, props.pageSize)
 
 function defaultFor(field) {
   return field.default ?? (field.options && field.options[0]?.id) ?? ''
@@ -264,12 +298,41 @@ onMounted(async () => {
         </div>
         <button v-if="showRefresh" class="btn ghost compact" type="button" :disabled="loading" @click="refresh">Tải lại</button>
       </div>
+      <div class="filter-bar">
+        <input
+          v-model="search"
+          type="search"
+          placeholder="Tìm kiếm nhanh trong bảng..."
+          aria-label="Tìm kiếm"
+        />
+        <button class="btn ghost compact" type="button" @click="showColumnFilters = !showColumnFilters">
+          {{ showColumnFilters ? 'Ẩn lọc theo cột' : 'Lọc theo cột' }}
+        </button>
+        <button
+          v-if="search || hasActiveColumnFilter"
+          class="btn ghost compact"
+          type="button"
+          @click="clearFilters"
+        >Xóa lọc</button>
+      </div>
       <div class="table-wrap">
         <table>
           <thead>
             <tr>
               <th v-for="column in columns" :key="column.key">{{ column.label }}</th>
               <th v-if="showActionsCol">Thao tác</th>
+            </tr>
+            <tr v-if="showColumnFilters" class="filter-row">
+              <th v-for="column in columns" :key="column.key">
+                <input
+                  v-model="columnFilters[column.key]"
+                  type="search"
+                  class="column-filter-input"
+                  :placeholder="`Lọc ${column.label}`"
+                  :aria-label="`Lọc theo ${column.label}`"
+                />
+              </th>
+              <th v-if="showActionsCol"></th>
             </tr>
           </thead>
           <tbody>
@@ -294,7 +357,8 @@ onMounted(async () => {
           </tbody>
         </table>
       </div>
-      <div v-if="!rows.length && !loading" class="empty-state">{{ emptyText }}</div>
+      <div v-if="!loading && !rows.length" class="empty-state">{{ emptyText }}</div>
+      <div v-else-if="!loading && !filteredRows.length" class="empty-state">Không tìm thấy kết quả phù hợp với "{{ search }}".</div>
       <div v-if="loading" class="empty-state">Đang tải dữ liệu...</div>
 
       <Pagination :page="page" :total-pages="totalPages" :total="total" @go="goToPage" />

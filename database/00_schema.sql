@@ -9,12 +9,21 @@
   - FOREIGN KEY: khoa ngoai, lien ket sang bang khac
 */
 
+-- vw_XuatKhoChiTiet + trg_GhiBenhLyDuongTinh dung XML method (.value) nen bat
+-- buoc QUOTED_IDENTIFIER ON luc tao. Mot so client (sqlcmd) connect voi setting
+-- nay OFF, khien object luu sai setting va loi luc chay. Set tuong minh cho chac.
+SET QUOTED_IDENTIFIER ON;
+SET ANSI_NULLS ON;
+GO
+
 IF OBJECT_ID('dbo.vw_XuatKhoChiTiet', 'V') IS NOT NULL DROP VIEW dbo.vw_XuatKhoChiTiet;
 IF OBJECT_ID('dbo.vw_PhieuYeuCauChiTiet', 'V') IS NOT NULL DROP VIEW dbo.vw_PhieuYeuCauChiTiet;
 IF OBJECT_ID('dbo.vw_MauSapHetHan', 'V') IS NOT NULL DROP VIEW dbo.vw_MauSapHetHan;
 IF OBJECT_ID('dbo.vw_TonKhoMau', 'V') IS NOT NULL DROP VIEW dbo.vw_TonKhoMau;
 GO
 
+IF OBJECT_ID('dbo.trg_GhiBenhLyDuongTinh', 'TR') IS NOT NULL DROP TRIGGER dbo.trg_GhiBenhLyDuongTinh;
+IF OBJECT_ID('dbo.trg_TinhSoLuongThucTe', 'TR') IS NOT NULL DROP TRIGGER dbo.trg_TinhSoLuongThucTe;
 IF OBJECT_ID('dbo.trg_UpdateHang', 'TR') IS NOT NULL DROP TRIGGER dbo.trg_UpdateHang;
 IF OBJECT_ID('dbo.trg_TruDiem', 'TR') IS NOT NULL DROP TRIGGER dbo.trg_TruDiem;
 IF OBJECT_ID('dbo.trg_CongDiem', 'TR') IS NOT NULL DROP TRIGGER dbo.trg_CongDiem;
@@ -604,5 +613,94 @@ BEGIN
   SET HangThanhVien = dbo.fn_XepHangThanhVien(nh.DiemTichLuy)
   FROM NGUOI_HIEN nh
   JOIN inserted i ON i.MaNguoiHien = nh.MaNguoiHien;
+END;
+GO
+
+-- SoLuongThucTe cua chien dich = so goi mau THUC TE da thu nhan trong chien
+-- dich do (dem tu GOI_MAU_TOAN_PHAN), thay cho bo dem thu cong +/-1 o backend.
+-- Chay tren INSERT/UPDATE/DELETE va tinh lai cho moi chien dich bi anh huong
+-- (ke ca khi mot goi mau doi tu chien dich nay sang chien dich khac).
+CREATE TRIGGER trg_TinhSoLuongThucTe
+ON GOI_MAU_TOAN_PHAN
+AFTER INSERT, UPDATE, DELETE
+AS
+BEGIN
+  SET NOCOUNT ON;
+
+  UPDATE cd
+  SET SoLuongThucTe = (
+    SELECT COUNT(*)
+    FROM GOI_MAU_TOAN_PHAN gm
+    WHERE gm.MaChienDich = cd.MaChienDich
+  )
+  FROM CHIEN_DICH cd
+  WHERE cd.MaChienDich IN (
+    SELECT MaChienDich FROM inserted WHERE MaChienDich IS NOT NULL
+    UNION
+    SELECT MaChienDich FROM deleted WHERE MaChienDich IS NOT NULL
+  );
+END;
+GO
+
+-- Dong bo lai SoLuongThucTe cho TAT CA chien dich theo so goi mau seed o tren
+-- (trigger chua ton tai luc INSERT goi mau phia tren file nay nen phai tinh lai).
+UPDATE cd
+SET SoLuongThucTe = (
+  SELECT COUNT(*)
+  FROM GOI_MAU_TOAN_PHAN gm
+  WHERE gm.MaChienDich = cd.MaChienDich
+)
+FROM CHIEN_DICH cd;
+GO
+
+-- Khi mot ket qua xet nghiem la "Duong tinh", ghi canh bao benh ly vao ho so
+-- nguoi hien da hien goi mau do, de lan hien sau co the doi chieu. Goi mau
+-- duong tinh khong duoc tach/xuat (trg_Check_TachChiet + checkBagReadyForComponents)
+-- nen khong doi chieu sang benh nhan. Danh dau theo [MaGoiMau] + loai xet nghiem
+-- nen chay lai khong ghi trung.
+CREATE TRIGGER trg_GhiBenhLyDuongTinh
+ON KET_QUA_XET_NGHIEM
+AFTER INSERT, UPDATE
+AS
+BEGIN
+  SET NOCOUNT ON;
+
+  UPDATE nh
+  SET BenhLy = LEFT(
+    CASE
+      WHEN nh.BenhLy IS NULL OR LTRIM(RTRIM(nh.BenhLy)) = N''
+           OR nh.BenhLy = NCHAR(75) + NCHAR(104) + NCHAR(244) + NCHAR(110) + NCHAR(103)
+        THEN N''
+      ELSE nh.BenhLy + N'; '
+    END
+    + STUFF((
+        SELECT N'; ' + x.GhiChu
+        FROM (
+          SELECT DISTINCT N'[' + i.MaGoiMau + N'] '
+                 + ISNULL(i.LoaiXetNghiem, NCHAR(88) + NCHAR(233) + NCHAR(116) + NCHAR(32) + NCHAR(110) + NCHAR(103) + NCHAR(104) + NCHAR(105) + NCHAR(7879) + NCHAR(109))
+                 + NCHAR(32) + NCHAR(100) + NCHAR(432) + NCHAR(417) + NCHAR(110) + NCHAR(103) + NCHAR(32) + NCHAR(116) + NCHAR(237) + NCHAR(110) + NCHAR(104) AS GhiChu
+          FROM inserted i
+          JOIN GOI_MAU_TOAN_PHAN gm ON gm.MaGoiMau = i.MaGoiMau
+          WHERE i.KetQua = NCHAR(68) + NCHAR(432) + NCHAR(417) + NCHAR(110) + NCHAR(103) + NCHAR(32) + NCHAR(116) + NCHAR(237) + NCHAR(110) + NCHAR(104)
+            AND gm.MaNguoiHien = nh.MaNguoiHien
+        ) x
+        WHERE CHARINDEX(x.GhiChu, ISNULL(nh.BenhLy, N'')) = 0
+        FOR XML PATH(''), TYPE
+      ).value('.', 'NVARCHAR(MAX)'), 1, 2, N''),
+    500)
+  FROM NGUOI_HIEN nh
+  WHERE EXISTS (
+    SELECT 1
+    FROM inserted i
+    JOIN GOI_MAU_TOAN_PHAN gm ON gm.MaGoiMau = i.MaGoiMau
+    WHERE gm.MaNguoiHien = nh.MaNguoiHien
+      AND i.KetQua = NCHAR(68) + NCHAR(432) + NCHAR(417) + NCHAR(110) + NCHAR(103) + NCHAR(32) + NCHAR(116) + NCHAR(237) + NCHAR(110) + NCHAR(104)
+      AND CHARINDEX(
+            N'[' + i.MaGoiMau + N'] '
+              + ISNULL(i.LoaiXetNghiem, NCHAR(88) + NCHAR(233) + NCHAR(116) + NCHAR(32) + NCHAR(110) + NCHAR(103) + NCHAR(104) + NCHAR(105) + NCHAR(7879) + NCHAR(109))
+              + NCHAR(32) + NCHAR(100) + NCHAR(432) + NCHAR(417) + NCHAR(110) + NCHAR(103) + NCHAR(32) + NCHAR(116) + NCHAR(237) + NCHAR(110) + NCHAR(104),
+            ISNULL(nh.BenhLy, N'')
+          ) = 0
+  );
 END;
 GO
