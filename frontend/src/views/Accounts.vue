@@ -1,5 +1,9 @@
 <script setup>
-defineProps({
+import { computed, toRef } from 'vue'
+import Pagination from '../components/Pagination.vue'
+import { usePagination } from '../composables/usePagination'
+
+const props = defineProps({
   accounts: { type: Array, required: true },
   pendingAccounts: { type: Array, default: () => [] },
   currentUsername: { type: String, required: true },
@@ -8,7 +12,12 @@ defineProps({
   databaseResetError: { type: String, default: '' },
 })
 
-const emit = defineEmits(['promote-staff', 'revoke-staff', 'delete-account', 'approve-account', 'reject-account', 'reset-database'])
+// Donors self-register and manage their own profile, so they don't belong in
+// the admin account-management list (only admin/staff/hospital are managed here).
+const visibleAccounts = computed(() => props.accounts.filter((a) => a.role !== 'donor'))
+const acc = usePagination(visibleAccounts, 25)
+
+const emit = defineEmits(['revoke-staff', 'delete-account', 'approve-account', 'reject-account', 'reset-database'])
 
 const roleRequestLabels = {
   HOSPITAL: 'Bệnh viện',
@@ -39,17 +48,11 @@ const labels = {
 function accountLabel(account) {
   return labels[account.role] || account.displayName
 }
-function canPromote(account) {
-  return account.role !== 'admin' && account.role !== 'staff'
-}
 function canRevoke(account) {
   return account.role === 'staff'
 }
 function canDelete(account, currentUsername) {
   return account.role !== 'admin' && account.username !== currentUsername
-}
-function promote(account) {
-  if (canPromote(account)) emit('promote-staff', account.username)
 }
 function revoke(account) {
   if (canRevoke(account)) emit('revoke-staff', account.username)
@@ -115,7 +118,7 @@ function resetDatabase() {
       <div class="section-title">
         <div>
           <h3>Danh s&#225;ch t&#224;i kho&#7843;n</h3>
-          <p>Admin c&#243; th&#7875; c&#7845;p quy&#7873;n staff, thu h&#7891;i quy&#7873;n staff ho&#7863;c x&#243;a t&#224;i kho&#7843;n kh&#244;ng c&#242;n s&#7917; d&#7909;ng.</p>
+          <p>Admin c&#243; th&#7875; thu h&#7891;i quy&#7873;n staff ho&#7863;c x&#243;a t&#224;i kho&#7843;n kh&#244;ng c&#242;n s&#7917; d&#7909;ng. T&#224;i kho&#7843;n ng&#432;&#7901;i hi&#7871;n kh&#244;ng hi&#7875;n th&#7883; &#7903; &#273;&#226;y.</p>
         </div>
       </div>
       <div class="table-wrap">
@@ -130,14 +133,13 @@ function resetDatabase() {
             </tr>
           </thead>
           <tbody>
-            <tr v-for="account in accounts" :key="account.username">
+            <tr v-for="account in acc.paged.value" :key="account.username">
               <td><strong>{{ account.username }}</strong></td>
               <td>{{ account.displayName }}</td>
               <td>{{ accountLabel(account) }}</td>
               <td><span class="badge info" v-if="account.username === currentUsername">&#272;ang &#273;&#259;ng nh&#7853;p</span><span v-else class="badge neutral">Ho&#7841;t &#273;&#7897;ng</span></td>
               <td>
-                <button v-if="canPromote(account)" class="btn primary compact" type="button" @click="promote(account)">Chuy&#7875;n th&#224;nh Staff</button>
-                <div v-else-if="canRevoke(account)" class="action-row">
+                <div v-if="canRevoke(account)" class="action-row">
                   <button class="btn secondary compact" type="button" @click="revoke(account)">Kh&#244;ng cho l&#224;m Staff</button>
                   <button v-if="canDelete(account, currentUsername)" class="btn danger compact" type="button" @click="remove(account)">X&#243;a</button>
                 </div>
@@ -148,6 +150,7 @@ function resetDatabase() {
           </tbody>
         </table>
       </div>
+      <Pagination :page="acc.page.value" :total-pages="acc.totalPages.value" :total="acc.total.value" @go="acc.goToPage" />
     </section>
 
     <section class="table-card danger-zone">

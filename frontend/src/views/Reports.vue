@@ -1,12 +1,18 @@
 ﻿<script setup>
 import { onMounted, ref } from 'vue'
 import { api } from '../api'
+import Pagination from '../components/Pagination.vue'
+import { usePagination } from '../composables/usePagination'
 
 const inventory = ref([])
 const expiring = ref([])
 const campaigns = ref([])
 const error = ref('')
 const loading = ref(false)
+
+// "Sắp hết hạn" can return hundreds of bags and was freezing the tab; paginate it.
+const exp = usePagination(expiring, 15)
+const camp = usePagination(campaigns, 15)
 
 async function loadReports() {
   loading.value = true
@@ -53,11 +59,13 @@ onMounted(loadReports)
     <div class="card-grid two">
       <section class="table-card">
         <div class="section-title"><div><h3>Sắp hết hạn</h3><p>Túi máu hết hạn trong 30 ngày.</p></div></div>
-        <div class="table-wrap"><table><thead><tr><th>Mã</th><th>Loại</th><th>Hạn dùng</th><th>Trạng thái</th></tr></thead><tbody><tr v-for="row in expiring" :key="row.id"><td>{{ row.id }}</td><td>{{ row.type }}</td><td>{{ new Date(row.expiresAt).toLocaleDateString('vi-VN') }}</td><td>{{ row.status }}</td></tr></tbody></table></div>
+        <div class="table-wrap"><table><thead><tr><th>Mã</th><th>Loại</th><th>Hạn dùng</th><th>Trạng thái</th></tr></thead><tbody><tr v-for="row in exp.paged.value" :key="row.id"><td>{{ row.id }}</td><td>{{ row.type }}</td><td>{{ new Date(row.expiresAt).toLocaleDateString('vi-VN') }}</td><td>{{ row.status }}</td></tr></tbody></table></div>
+        <Pagination :page="exp.page.value" :total-pages="exp.totalPages.value" :total="exp.total.value" @go="exp.goToPage" />
       </section>
       <section class="table-card">
         <div class="section-title"><div><h3>Chiến dịch</h3><p>So sánh dự kiến và thực tế.</p></div></div>
-        <div class="table-wrap"><table><thead><tr><th>Mã</th><th>Tên</th><th>Dự kiến</th><th>Thực tế</th></tr></thead><tbody><tr v-for="row in campaigns" :key="row.id"><td>{{ row.id }}</td><td>{{ row.name }}</td><td>{{ row.expected }}</td><td>{{ row.actual }}</td></tr></tbody></table></div>
+        <div class="table-wrap"><table><thead><tr><th>Mã</th><th>Tên</th><th>Dự kiến</th><th>Thực tế</th></tr></thead><tbody><tr v-for="row in camp.paged.value" :key="row.id"><td>{{ row.id }}</td><td>{{ row.name }}</td><td>{{ row.expected }}</td><td>{{ row.actual }}</td></tr></tbody></table></div>
+        <Pagination :page="camp.page.value" :total-pages="camp.totalPages.value" :total="camp.total.value" @go="camp.goToPage" />
       </section>
     </div>
   </section>

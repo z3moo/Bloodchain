@@ -1,4 +1,4 @@
-/*
+﻿/*
   BLOODCHAIN - Tao bang du lieu
   Thu tu chay:
   1. 00_schema.sql
@@ -140,7 +140,7 @@ GO
 CREATE TABLE KET_QUA_XET_NGHIEM (
   MaXetNghiem VARCHAR(20) PRIMARY KEY,
   LoaiXetNghiem NVARCHAR(100),
-  KetQua NVARCHAR(20) check (KetQua in ('Dương tính','Âm tính')),
+  KetQua NVARCHAR(20) check (KetQua in (N'Dương tính',N'Âm tính')),
   NgayXetNghiem DATETIME,
   MaGoiMau VARCHAR(20),
   MaNV_ThucHien VARCHAR(20),

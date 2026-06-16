@@ -310,10 +310,6 @@ function rejectAccount(username) {
   return api.accounts.reject(username)
     .then(() => loadPending())
 }
-function promoteToStaff(username) {
-  return api.patch('/accounts', `${username}/promote`, {})
-    .then(() => loadAccounts())
-}
 function revokeStaff(username) {
   const account = accounts.value.find((item) => item.username === username)
   const nextRole = account?.hospitalId ? 'hospital' : 'donor'
@@ -491,7 +487,7 @@ onUnmounted(() => {
           <button class="btn ghost" type="button" @click="logout">&#272;&#259;ng xu&#7845;t</button>
         </div>
       </header>
-      <main id="main-content" class="main-content" tabindex="-1"><Accounts v-if="activeModule.key === 'accounts'" :accounts="accounts" :pending-accounts="pendingAccounts" :current-username="currentUser.username" :resetting-database="resettingDatabase" :database-reset-message="databaseResetMessage" :database-reset-error="databaseResetError" @promote-staff="promoteToStaff" @revoke-staff="revokeStaff" @delete-account="deleteAccount" @approve-account="approveAccount" @reject-account="rejectAccount" @reset-database="resetDatabase" /><component v-else :is="activeModule.component" @open-module="openModule" /></main>
+      <main id="main-content" class="main-content" tabindex="-1"><Accounts v-if="activeModule.key === 'accounts'" :accounts="accounts" :pending-accounts="pendingAccounts" :current-username="currentUser.username" :resetting-database="resettingDatabase" :database-reset-message="databaseResetMessage" :database-reset-error="databaseResetError" @revoke-staff="revokeStaff" @delete-account="deleteAccount" @approve-account="approveAccount" @reject-account="rejectAccount" @reset-database="resetDatabase" /><component v-else :is="activeModule.component" @open-module="openModule" /></main>
     </div>
   </div>
 </template>

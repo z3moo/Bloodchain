@@ -79,7 +79,9 @@ const pieSlices = computed(() => {
 })
 
 /* ---------- Biểu đồ cột: số túi máu tiếp nhận theo ngày ---------- */
-const BAR = { height: 170, gap: 14, barWidth: 26, padLeft: 8 }
+// height = vị trí đường nền (baseline). topPad chừa chỗ cho nhãn số trên đỉnh
+// cột cao nhất, nếu không cột max sẽ chạm y=0 và nhãn bị cắt khỏi khung.
+const BAR = { height: 170, gap: 14, barWidth: 26, padLeft: 8, topPad: 20 }
 
 const barRows = computed(() => {
   const rows = intake.value.map((row) => ({
@@ -89,8 +91,9 @@ const barRows = computed(() => {
   }))
   const max = rows.reduce((m, row) => Math.max(m, row.bags), 0) || 1
   const step = BAR.barWidth + BAR.gap
+  const plotHeight = BAR.height - BAR.topPad
   return rows.map((row, index) => {
-    const h = Math.round((row.bags / max) * BAR.height)
+    const h = Math.round((row.bags / max) * plotHeight)
     const [, mm, dd] = (row.day || '').split('-')
     return {
       ...row,

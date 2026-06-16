@@ -289,10 +289,6 @@ app.get('/api/accounts', requireRole('admin'), async (_req, res) => {
   try { const pool = await getPool(); const result = await pool.request().query('SELECT * FROM vw_TaiKhoan ORDER BY MaTaiKhoan'); res.json(result.recordset.map(mapAccount)) }
   catch (error) { safeError(res, error) }
 })
-app.patch('/api/accounts/:username/promote', requireRole('admin'), async (req, res) => {
-  try { const pool = await getPool(); await pool.request().input('TenDangNhap', sql.VarChar(50), req.params.username).execute('sp_ChuyenThanhStaff'); const result = await pool.request().input('TenDangNhap', sql.VarChar(50), req.params.username).query('SELECT * FROM TAI_KHOAN WHERE TenDangNhap = @TenDangNhap'); res.json(mapAccount(result.recordset[0])) }
-  catch (error) { safeError(res, error) }
-})
 app.patch('/api/accounts/:username/revoke', requireRole('admin'), async (req, res) => {
   const nextRole = req.body?.role === 'hospital' ? 'HOSPITAL' : 'DONOR'
   try { const pool = await getPool(); await pool.request().input('TenDangNhap', sql.VarChar(50), req.params.username).input('VaiTroMoi', sql.VarChar(20), nextRole).execute('sp_ThuHoiStaff'); const result = await pool.request().input('TenDangNhap', sql.VarChar(50), req.params.username).query('SELECT * FROM TAI_KHOAN WHERE TenDangNhap = @TenDangNhap'); res.json(mapAccount(result.recordset[0])) }

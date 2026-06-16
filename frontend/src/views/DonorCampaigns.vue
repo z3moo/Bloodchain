@@ -1,6 +1,8 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue'
 import { api } from '../api'
+import Pagination from '../components/Pagination.vue'
+import { usePagination } from '../composables/usePagination'
 
 const all = ref([])
 const mine = ref([])
@@ -14,6 +16,9 @@ const upcoming = computed(() => {
 })
 
 const myCampaignIds = computed(() => new Set(mine.value.map((row) => row.id)))
+
+const up = usePagination(upcoming, 15)
+const mn = usePagination(mine, 15)
 
 function formatDate(value) {
   if (!value) return '--'
@@ -105,7 +110,7 @@ onMounted(loadAll)
             </tr>
           </thead>
           <tbody>
-            <tr v-for="row in upcoming" :key="row.id">
+            <tr v-for="row in up.paged.value" :key="row.id">
               <td>{{ row.id }}</td>
               <td>{{ row.name }}</td>
               <td>{{ row.location || '--' }}</td>
@@ -134,6 +139,7 @@ onMounted(loadAll)
       </div>
       <div v-if="!upcoming.length && !loading" class="empty-state">Chưa có chiến dịch sắp diễn ra.</div>
       <div v-if="loading" class="empty-state">Đang tải dữ liệu...</div>
+      <Pagination :page="up.page.value" :total-pages="up.totalPages.value" :total="up.total.value" @go="up.goToPage" />
     </section>
 
     <section class="table-card" v-if="mine.length">
@@ -154,7 +160,7 @@ onMounted(loadAll)
             </tr>
           </thead>
           <tbody>
-            <tr v-for="row in mine" :key="row.id">
+            <tr v-for="row in mn.paged.value" :key="row.id">
               <td>{{ row.id }}</td>
               <td>{{ row.name }}</td>
               <td>{{ formatDate(row.time) }}</td>
@@ -163,6 +169,7 @@ onMounted(loadAll)
           </tbody>
         </table>
       </div>
+      <Pagination :page="mn.page.value" :total-pages="mn.totalPages.value" :total="mn.total.value" @go="mn.goToPage" />
     </section>
   </section>
 </template>

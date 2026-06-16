@@ -1,6 +1,8 @@
 <script setup>
 import { computed, onMounted, reactive, ref } from 'vue'
 import { api } from '../api'
+import Pagination from '../components/Pagination.vue'
+import { usePagination } from '../composables/usePagination'
 
 const props = defineProps({
   title: { type: String, required: true },
@@ -21,6 +23,9 @@ const props = defineProps({
   // ctx = { reload, startEdit, message: setMessage, error: setError }.
   customActions: { type: Array, default: () => [] },
   showRefresh: { type: Boolean, default: true },
+  // Rows shown per page. The table paginates client-side to avoid rendering
+  // thousands of rows at once (e.g. ~4600 components) which freezes the UI.
+  pageSize: { type: Number, default: 25 },
 })
 
 const rows = ref([])
@@ -32,6 +37,10 @@ const form = reactive({})
 const lookups = reactive({})
 
 const showActionsCol = computed(() => props.canEdit || props.canDelete || props.customActions.length > 0)
+
+// Client-side pagination: only the current page's rows are rendered, so big
+// tables (e.g. ~4600 components) don't freeze the UI.
+const { page, totalPages, total, paged: pagedRows, goToPage } = usePagination(rows, props.pageSize)
 
 function defaultFor(field) {
   return field.default ?? (field.options && field.options[0]?.id) ?? ''
@@ -62,6 +71,7 @@ async function loadRows() {
   try {
     const data = await api.list(props.endpoint)
     rows.value = props.filterFn ? props.filterFn(data) : data
+    page.value = 1
   } catch (err) {
     error.value = err.message
   } finally {
@@ -263,7 +273,7 @@ onMounted(async () => {
             </tr>
           </thead>
           <tbody>
-            <tr v-for="row in rows" :key="row.id">
+            <tr v-for="row in pagedRows" :key="row.id">
               <td v-for="column in columns" :key="column.key">{{ display(row, column) }}</td>
               <td v-if="showActionsCol">
                 <div class="inline-actions">
@@ -286,6 +296,8 @@ onMounted(async () => {
       </div>
       <div v-if="!rows.length && !loading" class="empty-state">{{ emptyText }}</div>
       <div v-if="loading" class="empty-state">Đang tải dữ liệu...</div>
+
+      <Pagination :page="page" :total-pages="totalPages" :total="total" @go="goToPage" />
     </section>
   </section>
 </template>

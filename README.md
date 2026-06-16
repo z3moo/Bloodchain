@@ -72,7 +72,9 @@ bloodchain-local/
 │
 └── database/                 Script SQL
     ├── 00_schema.sql              Bảng nghiệp vụ và dữ liệu mẫu
-    └── 02_auth_permissions.sql    Bảng tài khoản, vai trò, view, stored procedure
+    ├── 01_demo_data.sql           Dữ liệu demo (UTF-8 có BOM)
+    ├── 02_auth_permissions.sql    Bảng tài khoản, vai trò, view, stored procedure
+    └── 03_demo_accounts.sql       Tài khoản đăng nhập demo cho mọi người hiến / bệnh viện
 ```
 
 ## Yêu cầu môi trường
@@ -119,14 +121,20 @@ CREATE DATABASE BloodChainDB;
 Đặt database hiện tại sang `BloodChainDB`, sau đó chạy **theo đúng thứ tự**:
 
 1. `database/00_schema.sql`
-2. `database/02_auth_permissions.sql`
+2. `database/01_demo_data.sql` (tùy chọn — dữ liệu demo)
+3. `database/02_auth_permissions.sql`
+4. `database/03_demo_accounts.sql` (tùy chọn — tài khoản demo, cần chạy sau 01 và 02)
 
 Hoặc nạp bằng dòng lệnh (thay server name cho đúng máy của bạn; `-C` để tin tưởng chứng chỉ của ODBC Driver 18, `-E` cho Windows Authentication):
 
 ```powershell
 sqlcmd -S "localhost\MSSQLSERVER01" -d BloodChainDB -E -C -i "database\00_schema.sql"
+sqlcmd -S "localhost\MSSQLSERVER01" -d BloodChainDB -E -C -i "database\01_demo_data.sql"
 sqlcmd -S "localhost\MSSQLSERVER01" -d BloodChainDB -E -C -i "database\02_auth_permissions.sql"
+sqlcmd -S "localhost\MSSQLSERVER01" -d BloodChainDB -E -C -i "database\03_demo_accounts.sql"
 ```
+
+> Tài khoản demo (file 03) dùng chung mật khẩu `demo123`; tên đăng nhập là mã người hiến / bệnh viện (vd: `NH0413`, `BV003`).
 
 ### 4. Chạy backend
 

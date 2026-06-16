@@ -1,10 +1,15 @@
 <script setup>
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { api } from '../api'
+import Pagination from '../components/Pagination.vue'
+import { usePagination } from '../composables/usePagination'
 
 const summary = ref({ points: 0, memberRank: '', redemptions: [] })
 const loading = ref(false)
 const error = ref('')
+
+const redemptions = computed(() => summary.value.redemptions || [])
+const { page, totalPages, total, paged, goToPage } = usePagination(redemptions, 20)
 
 function formatDate(value) {
   if (!value) return '--'
@@ -74,7 +79,7 @@ onMounted(loadPoints)
             </tr>
           </thead>
           <tbody>
-            <tr v-for="row in summary.redemptions" :key="row.id">
+            <tr v-for="row in paged" :key="row.id">
               <td>{{ row.id }}</td>
               <td>{{ row.name }}</td>
               <td>{{ formatDate(row.redeemedAt) }}</td>
@@ -85,6 +90,7 @@ onMounted(loadPoints)
       </div>
       <div v-if="!summary.redemptions.length && !loading" class="empty-state">Chưa có lịch sử đổi quà.</div>
       <div v-if="loading" class="empty-state">Đang tải dữ liệu...</div>
+      <Pagination :page="page" :total-pages="totalPages" :total="total" @go="goToPage" />
     </section>
   </section>
 </template>

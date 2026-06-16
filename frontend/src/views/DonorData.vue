@@ -1,6 +1,8 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue'
 import { api } from '../api'
+import Pagination from '../components/Pagination.vue'
+import { usePagination } from '../composables/usePagination'
 
 const rows = ref([])
 const loading = ref(false)
@@ -17,6 +19,8 @@ const filtered = computed(() => {
     return hay.includes(q)
   })
 })
+
+const { page, totalPages, total, paged, goToPage } = usePagination(filtered, 25)
 
 function formatDate(value) {
   return value ? new Date(value).toLocaleDateString('vi-VN') : '--'
@@ -81,7 +85,7 @@ onMounted(load)
             </tr>
           </thead>
           <tbody>
-            <tr v-for="row in filtered" :key="row.id">
+            <tr v-for="row in paged" :key="row.id">
               <td><strong>{{ row.id }}</strong></td>
               <td>{{ row.name }}</td>
               <td>{{ formatDate(row.birthDate) }}</td>
@@ -97,6 +101,7 @@ onMounted(load)
       </div>
       <div v-if="!filtered.length && !loading" class="empty-state">Không tìm thấy người hiến phù hợp.</div>
       <div v-if="loading" class="empty-state">Đang tải dữ liệu...</div>
+      <Pagination :page="page" :total-pages="totalPages" :total="total" @go="goToPage" />
     </section>
   </section>
 </template>
