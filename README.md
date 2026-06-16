@@ -16,13 +16,16 @@
 - Trang riêng cho người hiến: Hồ sơ của tôi, Lịch sử hiến máu, Chiến dịch sắp tới (đăng ký tham gia), Điểm thưởng.
 - Trang riêng cho bệnh viện: Tổng quan bệnh viện, Bệnh nhân, Phiếu yêu cầu (theo dõi trạng thái duyệt và phiếu xuất).
 - Quản trị tài khoản: duyệt/từ chối tài khoản chờ duyệt, cấp quyền nhân viên, thu hồi quyền nhân viên, xóa tài khoản, khôi phục dữ liệu mẫu.
-- Tab **Dữ liệu người hiến**: xem chi tiết và tìm kiếm (theo tên, SĐT, nhóm máu, mã) cho admin và nhân viên.
+- Tìm kiếm & lọc trong mọi bảng: ô tìm nhanh toàn bảng, kèm **lọc theo từng cột** (bật/tắt) để lọc đúng trường mong muốn; trang Tài khoản có thêm lọc theo nhóm vai trò.
 - Quy trình nghiệp vụ có kiểm soát:
-  - Tách thành phần máu chỉ khi gói máu đã *Đạt* xét nghiệm và không có kết quả dương tính.
+  - Gói máu chỉ được đặt trạng thái *Đạt* khi đã có kết quả xét nghiệm thật và không có kết quả dương tính.
+  - Khi một xét nghiệm cho kết quả *Dương tính*, hệ thống tự ghi cảnh báo bệnh lý vào hồ sơ người hiến của gói máu đó (trigger trong CSDL).
+  - Tách thành phần máu chỉ khi gói máu đã *Đạt* và không có kết quả dương tính; tổng thể tích các thành phần không vượt quá thể tích gói máu.
   - Hạn sử dụng thành phần tự tính theo loại (hồng cầu 42 ngày, huyết tương 365 ngày, tiểu cầu 5 ngày).
-  - Xuất kho kiểm tra: phiếu đã duyệt, đúng nhóm máu, phản ứng chéo hòa hợp, thành phần còn hạn và sẵn sàng, không vượt thể tích yêu cầu.
-  - Phiếu yêu cầu của bệnh viện do nhân viên/quản trị duyệt; bệnh viện không tự duyệt được.
-- Tự cập nhật số liệu: số gói máu thực tế của chiến dịch và điểm tích lũy của người hiến thay đổi theo mỗi lần thêm/xóa gói máu.
+  - Phiếu yêu cầu lấy nhóm máu theo đúng hồ sơ bệnh nhân (không cho nhập tay lệch nhóm); bệnh viện chỉ tạo/sửa phiếu cho bệnh nhân của chính mình.
+  - Xuất kho kiểm tra đầy đủ: phiếu đã duyệt, **đúng nhóm máu**, **đúng loại thành phần** (hồng cầu/huyết tương/tiểu cầu), gói nguồn còn đạt chuẩn (không dương tính), phản ứng chéo hòa hợp, thành phần còn hạn và sẵn sàng, không vượt thể tích thành phần lẫn thể tích yêu cầu. Khi không chỉ định thành phần, hệ thống tự chọn theo FIFO đúng nhóm máu + loại + còn hạn.
+  - Phiếu yêu cầu của bệnh viện do nhân viên/quản trị duyệt; bệnh viện không tự duyệt được, và thao tác sửa phiếu không thể đổi trạng thái duyệt (chỉ đi qua nút Duyệt/Từ chối).
+- Tự cập nhật số liệu: số gói máu thực tế của chiến dịch (đếm trực tiếp từ gói máu) và điểm tích lũy/hạng thành viên của người hiến đều do trigger CSDL quản, thay đổi theo mỗi lần thêm/xóa gói máu.
 - Báo cáo nhanh: tồn kho theo nhóm máu (chỉ tính thành phần sẵn sàng còn hạn), gói sắp hết hạn, hiệu quả chiến dịch.
 
 ## Cấu trúc thư mục
@@ -74,7 +77,7 @@ bloodchain-local/
     ├── 00_schema.sql              Bảng nghiệp vụ và dữ liệu mẫu
     ├── 01_demo_data.sql           Dữ liệu demo (UTF-8 có BOM)
     ├── 02_auth_permissions.sql    Bảng tài khoản, vai trò, view, stored procedure
-    └── 03_demo_accounts.sql       Tài khoản đăng nhập demo cho mọi người hiến / bệnh viện
+    └── 03_demo_accounts.sql       Tài khoản đăng nhập demo cho mọi người hiến / bệnh viện / nhân viên
 ```
 
 ## Yêu cầu môi trường
@@ -134,7 +137,7 @@ sqlcmd -S "localhost\MSSQLSERVER01" -d BloodChainDB -E -C -i "database\02_auth_p
 sqlcmd -S "localhost\MSSQLSERVER01" -d BloodChainDB -E -C -i "database\03_demo_accounts.sql"
 ```
 
-> Tài khoản demo (file 03) dùng chung mật khẩu `demo123`; tên đăng nhập là mã người hiến / bệnh viện (vd: `NH0413`, `BV003`).
+> Tài khoản demo (file 03) dùng chung mật khẩu `demo123`; tên đăng nhập là mã người hiến / bệnh viện / nhân viên (vd: `NH0413`, `BV003`, `NV004`).
 
 ### 4. Chạy backend
 
