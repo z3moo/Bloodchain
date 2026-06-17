@@ -3,6 +3,7 @@ import CrudPage from './CrudPage.vue'
 
 const fields = [
   { key: 'name', label: 'Họ tên', placeholder: 'Nguyễn Văn A' },
+  { key: 'cccd', label: 'CCCD', placeholder: '001098000111' },
   { key: 'birthDate', label: 'Ngày sinh', type: 'date', default: '2000-01-01' },
   { key: 'phone', label: 'Số điện thoại', placeholder: '0912345678' },
   { key: 'bloodGroup', label: 'Nhóm máu', optionsFrom: '/blood-groups', default: 'O+' },
@@ -17,6 +18,7 @@ const fields = [
 const columns = [
   { key: 'id', label: 'Mã' },
   { key: 'name', label: 'Họ tên' },
+  { key: 'cccd', label: 'CCCD' },
   { key: 'birthDate', label: 'Ngày sinh', type: 'date' },
   { key: 'gender', label: 'Giới tính' },
   { key: 'phone', label: 'SĐT' },

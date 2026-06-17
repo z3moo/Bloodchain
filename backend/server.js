@@ -386,7 +386,7 @@ app.get('/api/storages', async (_req, res) => {
 
 app.get('/api/donors', async (req, res) => {
   if (req.user?.role === 'donor') return res.status(403).json({ message: 'Bạn chỉ có thể xem hồ sơ của mình.' })
-  try { const pool = await getPool(); const result = await pool.request().query('SELECT MaNguoiHien AS id, HoTen AS name, NgaySinh AS birthDate, GioiTinh AS gender, SDT AS phone, MaNhomMau AS bloodGroup, BenhLy AS medicalHistory, DiemTichLuy AS points, HangThanhVien AS memberRank FROM NGUOI_HIEN ORDER BY MaNguoiHien'); res.json(result.recordset) }
+  try { const pool = await getPool(); const result = await pool.request().query('SELECT MaNguoiHien AS id, HoTen AS name, NgaySinh AS birthDate, GioiTinh AS gender, CCCD AS cccd, SDT AS phone, MaNhomMau AS bloodGroup, BenhLy AS medicalHistory, DiemTichLuy AS points, HangThanhVien AS memberRank FROM NGUOI_HIEN ORDER BY MaNguoiHien'); res.json(result.recordset) }
   catch (error) { safeError(res, error) }
 })
 app.post('/api/donors', requireRole('admin', 'staff'), async (req, res) => {
@@ -415,6 +415,7 @@ app.put('/api/donors/:id', requireRole('admin', 'staff'), async (req, res) => {
       HoTen: { raw: nText(body.name, T.newDonor) },
       NgaySinh: { type: sql.Date, value: body.birthDate ? new Date(body.birthDate) : new Date('2000-01-01') },
       GioiTinh: { raw: nText(body.gender, T.other) },
+      CCCD: { type: sql.VarChar(20), value: body.cccd || req.params.id },
       SDT: { type: sql.VarChar(15), value: body.phone || '' },
       BenhLy: { raw: nText(body.medicalHistory, T.no) },
       DiemTichLuy: { type: sql.Int, value: asInt(body.points, 0) },
