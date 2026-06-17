@@ -155,8 +155,13 @@ async function nextId(pool, table, column, prefix, width = 3) {
   // minus a short prefix), not just `width`, so codes don't collide once they
   // pass 999. padStart(width) keeps them zero-padded and tidy up to 999, then
   // they naturally grow to NH1000, NH1001, ...
+  //
+  // Only count codes whose tail is purely numeric: the LIKE '<prefix>[0-9]%'
+  // skips foreign-shaped ids in the same column (e.g. demo accounts use
+  // MaTaiKhoan = 'TK_BV002'/'TK_NH0413', which must NOT be parsed as int), and
+  // TRY_CAST returns NULL instead of throwing on any odd tail that slips through.
   const result = await pool.request().query(
-    `SELECT ISNULL(MAX(CAST(SUBSTRING(${column}, ${prefix.length + 1}, 18) AS INT)), 0) AS maxId FROM ${table} WHERE ${column} LIKE '${prefix}%'`,
+    `SELECT ISNULL(MAX(TRY_CAST(SUBSTRING(${column}, ${prefix.length + 1}, 18) AS INT)), 0) AS maxId FROM ${table} WHERE ${column} LIKE '${prefix}[0-9]%'`,
   )
   return `${prefix}${String(Number(result.recordset[0].maxId) + 1).padStart(width, '0')}`
 }
